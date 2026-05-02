@@ -19,72 +19,77 @@ const declaration = {
   }
 };
 
-// Map Shiprocket status strings to normalised values
 function normaliseStatus(raw = '') {
   const s = raw.toLowerCase();
   if (s.includes('ready to ship') || s.includes('ready_to_ship')) return 'ready_to_ship';
-  if (s.includes('pending') || s.includes('new'))                  return 'pending';
-  if (s.includes('shipped') || s.includes('in transit'))           return 'shipped';
-  if (s.includes('delivered'))                                      return 'delivered';
-  if (s.includes('cancelled') || s.includes('canceled'))           return 'cancelled';
+  if (s.includes('pending') || s.includes('new') || s.includes('unprocessed')) return 'pending';
+  if (s.includes('shipped') || s.includes('in transit'))                        return 'shipped';
+  if (s.includes('delivered'))                                                  return 'delivered';
+  if (s.includes('cancelled') || s.includes('canceled'))                        return 'cancelled';
   return s;
 }
 
 async function execute({ status, limit = 20 }) {
   const now = new Date();
-  const results = [];
+  const orders = [];
+  const warnings = [];
 
-  // ── 1. Pull live orders from Shiprocket ─────────────────────────
+  // ── 1. Pull live orders from Shiprocket ─────────────────────────────────────
   try {
     const srData = await shiprocketListOrders({ per_page: limit });
     const srOrders = srData?.data?.orders || srData?.orders || [];
 
+    if (srOrders.length === 0 && srData?.data?.meta?.pagination) {
+      const total = srData.data.meta.pagination.total;
+      if (total > 0) {
+        warnings.push(`Shiprocket reports ${total} order(s) exist but returned an empty list — check API filters or pagination.`);
+      }
+    }
+
     for (const o of srOrders) {
       const normStatus = normaliseStatus(o.status);
 
-      // Apply status filter if requested
       if (status) {
         const filterNorm = normaliseStatus(status);
         if (normStatus !== filterNorm) continue;
       }
 
       const createdAt = new Date(o.created_at || o.order_date);
-      const diffDays  = Math.floor((now - createdAt) / (1000 * 60 * 60 * 24));
+      const diffDays  = isNaN(createdAt) ? null : Math.floor((now - createdAt) / (1000 * 60 * 60 * 24));
 
       let agentNote = 'Normal';
       if (normStatus === 'ready_to_ship') {
-        agentNote = diffDays >= 2
-          ? `⚠ Ready to ship but waiting for pickup for ${diffDays} day(s) — DELAYED`
-          : `Ready to ship (${diffDays} day(s) old)`;
+        agentNote = diffDays !== null && diffDays >= 2
+          ? `⚠ Ready to ship but waiting ${diffDays} day(s) — DELAYED`
+          : `Ready to ship${diffDays !== null ? ` (${diffDays} day(s) old)` : ''}`;
       } else if (normStatus === 'pending') {
-        agentNote = diffDays >= 2
+        agentNote = diffDays !== null && diffDays >= 2
           ? `⚠ Pending for ${diffDays} day(s) — DELAYED`
-          : `Pending for ${diffDays} day(s)`;
+          : `Pending${diffDays !== null ? ` for ${diffDays} day(s)` : ''}`;
       } else if (normStatus === 'shipped') {
-        agentNote = `In transit`;
+        agentNote = 'In transit';
       }
 
-      results.push({
+      orders.push({
         source:            'Shiprocket',
         id:                o.id || o.order_id,
         external_id:       o.channel_order_id || o.order_id,
         customer:          o.customer_name  || 'N/A',
         product:           o.products?.[0]?.name || o.channel_order_id || 'N/A',
         status:            normStatus,
-        shiprocket_status: o.status,
+        raw_status:        o.status,
         awb:               o.awb_code || 'N/A',
         courier:           o.courier_name || 'N/A',
-        created_at:        o.created_at || o.order_date,
-        days_since_creation: diffDays,
+        created_at:        o.created_at || o.order_date || 'N/A',
+        days_old:          diffDays,
         agent_note:        agentNote,
       });
     }
   } catch (err) {
-    // Don't hard-fail — fall through to Supabase results
-    results.push({ source: 'Shiprocket', error: `Could not fetch from Shiprocket: ${err.message}` });
+    warnings.push(`Shiprocket API unavailable: ${err.message}. Check SHIPROCKET_EMAIL and SHIPROCKET_PASSWORD on Render.`);
   }
 
-  // ── 2. Also pull from local Supabase (orders added via scraper) ──
+  // ── 2. Also pull from local Supabase (orders added via scraper) ─────────────
   try {
     let query = supabase
       .from('orders')
@@ -98,53 +103,64 @@ async function execute({ status, limit = 20 }) {
 
     const { data, error } = await query;
     if (!error && data && data.length > 0) {
-      const srIds = new Set(results.map(r => String(r.external_id)));
+      const srIds = new Set(orders.map(r => String(r.external_id)));
 
       for (const order of data) {
-        // Skip duplicates already returned from Shiprocket
         if (srIds.has(String(order.external_id))) continue;
 
         const createdAt = new Date(order.created_at);
-        const diffDays  = Math.floor((now - createdAt) / (1000 * 60 * 60 * 24));
+        const diffDays  = isNaN(createdAt) ? null : Math.floor((now - createdAt) / (1000 * 60 * 60 * 24));
 
         let agentNote = 'Normal';
-        if (order.status === 'pending' && diffDays >= 2) {
-          agentNote = `⚠ Pending for ${diffDays} day(s) — DELAYED`;
-        } else if (order.status === 'pending') {
-          agentNote = `Pending for ${diffDays} day(s)`;
+        if (order.status === 'pending') {
+          agentNote = diffDays !== null && diffDays >= 2
+            ? `⚠ Pending for ${diffDays} day(s) — DELAYED`
+            : `Pending${diffDays !== null ? ` for ${diffDays} day(s)` : ''}`;
         } else if (order.status === 'shipped') {
-          agentNote = `In transit`;
+          agentNote = 'In transit';
         }
 
-        results.push({
-          source:              'Database',
-          id:                  order.id,
-          external_id:         order.external_id,
-          customer:            order.customer_name,
-          product:             order.product_name,
-          status:              order.status,
-          awb:                 order.awb || 'N/A',
-          created_at:          order.created_at,
-          days_since_creation: diffDays,
-          agent_note:          agentNote,
+        orders.push({
+          source:    'Database',
+          id:        order.id,
+          external_id: order.external_id,
+          customer:  order.customer_name,
+          product:   order.product_name,
+          status:    order.status,
+          awb:       order.awb || 'N/A',
+          created_at: order.created_at,
+          days_old:  diffDays,
+          agent_note: agentNote,
         });
       }
     }
   } catch (_) {}
 
-  if (results.length === 0) {
+  // ── 3. Build response ────────────────────────────────────────────────────────
+  if (orders.length === 0 && warnings.length > 0) {
     return {
-      message: status
-        ? `No ${status} orders found in Shiprocket or the database.`
-        : 'No orders found in Shiprocket or the database.',
+      orders: [],
+      total: 0,
+      warnings,
+      message: `No orders found. Issues encountered: ${warnings.join(' | ')}`,
+      agent_instruction: 'Tell the user there are no orders visible right now and mention the specific warning about why Shiprocket could not be reached.',
+    };
+  }
+
+  if (orders.length === 0) {
+    return {
+      orders: [],
+      total: 0,
+      message: status ? `No ${status} orders found.` : 'No orders found.',
     };
   }
 
   return {
-    total: results.length,
-    orders: results,
+    total: orders.length,
+    orders,
+    warnings: warnings.length ? warnings : undefined,
     agent_instruction:
-      'Summarise clearly. Highlight any orders with status "ready_to_ship" as needing immediate pickup/shipping. Flag orders with ⚠ in agent_note as delayed.',
+      'Summarise clearly. Highlight any orders with status "ready_to_ship" as needing immediate pickup/shipping. Flag orders with ⚠ in agent_note as delayed. If warnings exist, mention Shiprocket could not be reached and data may be incomplete.',
   };
 }
 
