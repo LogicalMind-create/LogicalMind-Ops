@@ -61,12 +61,41 @@ app.use((err, req, res, next) => {
   });
 });
 
+// ─── Register Telegram webhook (runs in production on startup) ───────────────
+async function registerTelegramWebhook() {
+  const token = process.env.TELEGRAM_BOT_TOKEN;
+  const appUrl = process.env.APP_URL;
+  if (!token || !appUrl) return;
+
+  const webhookUrl = `${appUrl.replace(/\/$/, '')}/webhooks/telegram`;
+  try {
+    const res = await fetch(`https://api.telegram.org/bot${token}/setWebhook`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ url: webhookUrl, allowed_updates: ['message'] }),
+    });
+    const data = await res.json();
+    if (data.ok) {
+      console.log(`[Telegram] ✅ Webhook registered: ${webhookUrl}`);
+    } else {
+      console.warn('[Telegram] ⚠️  Webhook registration failed:', data.description);
+    }
+  } catch (err) {
+    console.warn('[Telegram] ⚠️  Could not register webhook:', err.message);
+  }
+}
+
 // ─── Start ───────────────────────────────────────────────────────────────────
-app.listen(PORT, () => {
+app.listen(PORT, async () => {
   console.log(`\n🚀 LogicalMind Ops running on http://localhost:${PORT}`);
   console.log(`   Phase 2 — Orders + Shiprocket active`);
   console.log(`   Phase 3 — WhatsApp broadcasts active`);
   console.log(`   Health: http://localhost:${PORT}/health\n`);
+
+  // Register Telegram webhook so the bot receives group messages
+  if (process.env.NODE_ENV === 'production') {
+    await registerTelegramWebhook();
+  }
 
   // Start order poller for Channel Rings alerts
   if (process.env.WHATSAPP_GROUP_CHANNEL_RINGS_NAME) {

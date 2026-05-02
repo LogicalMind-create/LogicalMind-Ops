@@ -3,53 +3,47 @@ const express = require('express');
 const router = express.Router();
 const supabase = require('../lib/supabase');
 
-/**
- * Telegram webhook — receives messages and forwards to Channel Rings WhatsApp
- *
- * Configured on Telegram Bot API:
- * POST https://logicalmind-ops.onrender.com/webhooks/telegram
- */
+// Only forward messages from this chat (your Telegram group)
+const ALLOWED_CHAT_ID = process.env.TELEGRAM_CHAT_ID ? Number(process.env.TELEGRAM_CHAT_ID) : null;
 
 router.post('/', async (req, res) => {
+  // Always respond 200 immediately so Telegram doesn't retry
+  res.status(200).json({ ok: true });
+
   try {
     const message = req.body.message;
-    if (!message || !message.text) {
-      return res.status(200).json({ ok: true }); // Ignore non-text messages
+    if (!message || !message.text) return;
+
+    // Only process messages from your configured Telegram group
+    if (ALLOWED_CHAT_ID && message.chat?.id !== ALLOWED_CHAT_ID) {
+      console.log(`[Telegram Webhook] Ignoring message from chat ${message.chat?.id} (not your group)`);
+      return;
     }
+
+    const text = message.text.trim();
+    if (text.startsWith('/')) return; // Ignore bot commands
 
     const sender = message.from?.first_name || message.from?.username || 'Team Member';
-    const text = message.text.trim();
-
-    // Ignore command messages
-    if (text.startsWith('/')) {
-      return res.status(200).json({ ok: true });
-    }
-
-    // Create a broadcast alert directly for Channel Rings
-    // This gets picked up by helper.js polling /api/broadcasts
-    const alertMessage = `📲 <b>[From Telegram]</b>\n${sender}:\n${text}`;
+    const alertMessage = `📲 [From Telegram]\n${sender}: ${text}`;
 
     const { data, error } = await supabase
       .from('broadcasts')
       .insert([{
         message: alertMessage,
-        group_filter: 'channel_rings', // Send only to Channel Rings team group
-        status: 'approved', // Auto-approved so helper sends immediately
+        group_filter: 'channel_rings',
+        status: 'approved',
         created_at: new Date().toISOString(),
       }])
       .select()
       .single();
 
     if (error) {
-      console.error('[Telegram Webhook] Error creating broadcast:', error.message);
-      return res.status(500).json({ ok: false, error: error.message });
+      console.error('[Telegram Webhook] Supabase error:', error.message);
+    } else {
+      console.log(`[Telegram Webhook] ✅ Forwarded to WhatsApp (broadcast #${data.id})`);
     }
-
-    console.log(`[Telegram Webhook] ✅ Message forwarded to WhatsApp (broadcast #${data.id})`);
-    res.status(200).json({ ok: true, broadcast_id: data.id });
   } catch (err) {
     console.error('[Telegram Webhook] Error:', err.message);
-    res.status(500).json({ ok: false, error: err.message });
   }
 });
 
