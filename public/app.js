@@ -169,7 +169,8 @@ async function sendMessage() {
 
     if (!res.ok) {
       const err = await res.json().catch(() => ({}));
-      renderMessage('agent', `⚠️ ${err.error || 'Something went wrong. Please try again.'}`);
+      const errMsg = err.detail || err.error || 'Something went wrong. Please try again.';
+      renderMessage('agent', `⚠️ ${errMsg}`);
       toast(err.error || 'Request failed', 'error');
       return;
     }
