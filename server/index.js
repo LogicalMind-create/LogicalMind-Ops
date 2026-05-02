@@ -5,6 +5,7 @@ const express = require('express');
 const cors = require('cors');
 const rateLimit = require('express-rate-limit');
 const path = require('path');
+const fs = require('fs');
 
 const app = express();
 const PORT = process.env.PORT || 3000;
@@ -43,16 +44,21 @@ function authMiddleware(req, res, next) {
 
 // ─── Routes ─────────────────────────────────────────────────────────────────
 app.use('/health', require('./routes/health'));
-app.use('/api/chat', authMiddleware, chatLimiter, require('./routes/chat'));
-app.use('/api/tasks', authMiddleware, require('./routes/tasks'));
-app.use('/api/orders', authMiddleware, require('./routes/orders'));
+app.use('/api/chat',       authMiddleware, chatLimiter, require('./routes/chat'));
+app.use('/api/tasks',      authMiddleware, require('./routes/tasks'));
+app.use('/api/orders',     authMiddleware, require('./routes/orders'));
+app.use('/api/broadcasts', authMiddleware, require('./routes/broadcasts'));
 
 // Webhooks (no auth middleware because external services call this)
 app.use('/webhooks/shiprocket', require('./webhooks/shiprocket'));
 
-// Catch-all: serve dashboard SPA
-app.get('/{*path}', (req, res) => {
-  res.sendFile(path.join(__dirname, '../public/index.html'));
+// Catch-all: serve dashboard SPA with secret embedded
+app.get('*', (req, res) => {
+  const secret = process.env.DASHBOARD_SECRET || '';
+  let html = fs.readFileSync(path.join(__dirname, '../public/index.html'), 'utf8');
+  html = html.replace('__DASHBOARD_SECRET_PLACEHOLDER__', secret);
+  res.setHeader('Content-Type', 'text/html');
+  res.send(html);
 });
 
 // ─── Error handler ───────────────────────────────────────────────────────────

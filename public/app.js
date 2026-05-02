@@ -7,7 +7,7 @@
 // ── Config ──────────────────────────────────────────────────────
 const API_BASE = '';   // same origin
 let SESSION_ID = localStorage.getItem('lm_session_id') || null;
-const SECRET   = localStorage.getItem('lm_secret') || '';
+const SECRET   = window.__DASHBOARD_SECRET__ || localStorage.getItem('lm_secret') || '';
 
 function apiFetch(path, opts = {}) {
   const headers = { 'Content-Type': 'application/json' };

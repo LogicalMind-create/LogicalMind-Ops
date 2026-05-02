@@ -1,0 +1,15 @@
+{
+  "name": "whatsapp-helper",
+  "version": "1.0.0",
+  "description": "LogicalMind Ops — WhatsApp group broadcast helper (runs on your PC)",
+  "main": "helper.js",
+  "scripts": {
+    "start": "node helper.js",
+    "discover": "node discover-groups.js"
+  },
+  "dependencies": {
+    "dotenv": "^16.0.0",
+    "node-fetch": "^3.3.2",
+    "playwright": "^1.44.0"
+  }
+}
