@@ -5,13 +5,14 @@ const supabase = require('../lib/supabase');
 
 // ─── Tool registry ───────────────────────────────────────────────────────────
 const toolModules = {
-  assign_task: require('../tools/assign_task'),
-  list_tasks: require('../tools/list_tasks'),
-  complete_task: require('../tools/complete_task'),
-  notify_team: require('../tools/notify_team'),
-  list_orders: require('../tools/list_orders'),
-  create_shipment: require('../tools/create_shipment'),
-  track_shipment: require('../tools/track_shipment'),
+  assign_task:        require('../tools/assign_task'),
+  list_tasks:         require('../tools/list_tasks'),
+  complete_task:      require('../tools/complete_task'),
+  notify_team:        require('../tools/notify_team'),
+  list_orders:        require('../tools/list_orders'),
+  create_shipment:    require('../tools/create_shipment'),
+  track_shipment:     require('../tools/track_shipment'),
+  broadcast_whatsapp: require('../tools/broadcast_whatsapp'),
 };
 
 const functionDeclarations = Object.values(toolModules).map((m) => m.declaration);
@@ -35,7 +36,7 @@ RULES:
 5. Keep responses concise — the team is busy. No unnecessary padding.
 6. When assigning tasks to "me", treat it as the currently logged-in user. When you don't know the person's name, use "me" as the person field.
 
-Current capabilities (Phase 1 & Phase 2):
+Current capabilities (Phase 1, 2 & 3):
 - assign_task: Add a task for yourself or your teammate
 - list_tasks: View pending/completed tasks
 - complete_task: Mark a task done
@@ -43,8 +44,9 @@ Current capabilities (Phase 1 & Phase 2):
 - list_orders: List your Amazon SmartBiz orders. Pay attention to the agent_note which indicates delayed orders.
 - create_shipment: Creates a Shiprocket shipment for a given order ID.
 - track_shipment: Gets current tracking info for an AWB.
+- broadcast_whatsapp: Queue a message to broadcast to all 43 WhatsApp student groups. The message goes into an approval queue — the user must approve it in the Broadcasts page of the dashboard before it sends. IMPORTANT: always confirm the message text with the user before calling this tool.
 
-Coming soon (not yet available): WhatsApp broadcasting, finance tracking.
+Coming soon (not yet available): finance tracking, app notifications.
 
 If the user asks for something you can't do yet, let them know it's on the roadmap and suggest what you CAN do instead.`;
 
