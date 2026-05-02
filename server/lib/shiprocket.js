@@ -77,7 +77,7 @@ async function generateAWB(shipmentId) {
 
 /**
  * Gets tracking details by AWB
- * @param {string} awb 
+ * @param {string} awb
  */
 async function getTrackingByAwb(awb) {
   try {
@@ -90,8 +90,26 @@ async function getTrackingByAwb(awb) {
   }
 }
 
+/**
+ * Lists orders from Shiprocket
+ * @param {Object} params Optional filters: { status, per_page }
+ */
+async function listOrders({ status, per_page = 20 } = {}) {
+  try {
+    const client = await getClient();
+    const params = { per_page };
+    if (status) params.filter_by = status;
+    const response = await client.get('/orders', { params });
+    return response.data;
+  } catch (err) {
+    console.error('[Shiprocket] List orders failed:', err.response?.data || err.message);
+    throw new Error(err.response?.data?.message || 'Failed to list orders from Shiprocket');
+  }
+}
+
 module.exports = {
   createOrder,
   generateAWB,
-  getTrackingByAwb
+  getTrackingByAwb,
+  listOrders,
 };
