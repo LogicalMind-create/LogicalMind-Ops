@@ -1,2 +1,3 @@
-2026/05/03-02:10:38.700 8d5c Creating DB C:\Users\kumar\OneDrive\Desktop\LogicalMind_Ops\whatsapp-helper\wa-session\Default\Session Storage since it was missing.
-2026/05/03-02:10:38.716 8d5c Reusing MANIFEST C:\Users\kumar\OneDrive\Desktop\LogicalMind_Ops\whatsapp-helper\wa-session\Default\Session Storage/MANIFEST-000001
+2026/05/03-02:16:05.541 9010 Reusing MANIFEST C:\Users\kumar\OneDrive\Desktop\LogicalMind_Ops\whatsapp-helper\wa-session\Default\Session Storage/MANIFEST-000001
+2026/05/03-02:16:05.542 9010 Recovering log #3
+2026/05/03-02:16:05.543 9010 Reusing old log C:\Users\kumar\OneDrive\Desktop\LogicalMind_Ops\whatsapp-helper\wa-session\Default\Session Storage/000003.log 

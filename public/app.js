@@ -24,9 +24,10 @@ function navigate(page) {
   const navBtn = document.getElementById('nav-' + page);
   if (navBtn) navBtn.classList.add('active');
 
-  if (page === 'tasks')  loadTasks();
-  if (page === 'home')   loadStats();
-  if (page === 'orders') loadOrders();
+  if (page === 'tasks')      loadTasks();
+  if (page === 'home')       loadStats();
+  if (page === 'orders')     loadOrders();
+  if (page === 'broadcasts') loadBroadcasts();
 }
 
 // ── Toast ────────────────────────────────────────────────────────
@@ -487,6 +488,110 @@ function escHtml(str) {
   return String(str || '').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
 }
 
+// ═════════════════════════════════════════════════════════════
+// ── BROADCASTS ──────────────────────────────────────────────────
+// ═════════════════════════════════════════════════════════════
+async function loadBroadcasts() {
+  const list = document.getElementById('broadcast-list');
+  if (!list) return;
+  try {
+    const res  = await apiFetch('/api/broadcasts?limit=30');
+    const data = await res.json();
+    renderBroadcasts(data);
+    // Update badge with draft count
+    const drafts = data.filter(b => b.status === 'draft').length;
+    const badge  = document.getElementById('broadcast-badge');
+    if (badge) {
+      badge.style.display = drafts > 0 ? '' : 'none';
+      badge.textContent   = drafts;
+    }
+  } catch (_) {
+    list.innerHTML = '<div class="empty-state"><div class="emoji">❌</div><p>Could not load broadcasts.</p></div>';
+  }
+}
+
+function renderBroadcasts(broadcasts) {
+  const list = document.getElementById('broadcast-list');
+  if (!list) return;
+  if (!broadcasts || broadcasts.length === 0) {
+    list.innerHTML = '<div class="empty-state"><div class="emoji">📢</div><p>No broadcasts yet. Compose one above!</p></div>';
+    return;
+  }
+  const statusColor = { draft:'#6366f1', approved:'#f59e0b', sending:'#3b82f6', sent:'#22c55e', failed:'#ef4444' };
+  list.innerHTML = broadcasts.map(b => {
+    const color    = statusColor[b.status] || '#6b7280';
+    const progress = b.groups_total > 0
+      ? `<div style="margin-top:6px;height:4px;background:var(--border);border-radius:99px;overflow:hidden">
+           <div style="height:100%;width:${Math.round(b.groups_sent/b.groups_total*100)}%;background:#22c55e;transition:width .4s"></div>
+         </div>
+         <span style="font-size:11px;color:var(--muted)">${b.groups_sent}/${b.groups_total} groups</span>`
+      : '';
+    const dateStr = new Date(b.created_at).toLocaleString('en-IN', { timeZone:'Asia/Kolkata', dateStyle:'short', timeStyle:'short' });
+    return `
+      <div class="task-item">
+        <div class="task-body" style="flex:1">
+          <div class="task-title" style="white-space:pre-wrap">${escHtml(b.message)}</div>
+          <div class="task-meta" style="margin-top:6px">
+            <span style="font-size:11px;font-weight:600;padding:2px 8px;border-radius:20px;background:${color}22;color:${color}">${b.status.toUpperCase()}</span>
+            <span>Filter: ${escHtml(b.group_filter)}</span>
+            <span>${dateStr}</span>
+          </div>
+          ${progress}
+        </div>
+        <div style="display:flex;flex-direction:column;gap:6px;align-items:flex-end;flex-shrink:0">
+          ${b.status === 'draft' ? `
+            <button class="btn btn-primary" style="font-size:11px;padding:5px 12px"
+              onclick="approveBroadcast('${b.id}')">Approve &amp; Send ✅</button>
+            <button class="btn btn-ghost" style="font-size:11px;padding:5px 10px;color:var(--danger)"
+              onclick="deleteBroadcast('${b.id}')">Delete</button>` : ''}
+        </div>
+      </div>`;
+  }).join('');
+}
+
+async function createBroadcast() {
+  const msg    = document.getElementById('broadcast-compose')?.value?.trim();
+  const filter = document.getElementById('broadcast-filter')?.value || 'all';
+  if (!msg) { toast('Please type a message first', 'error'); return; }
+  const res = await apiFetch('/api/broadcasts', {
+    method: 'POST',
+    body: JSON.stringify({ message: msg, group_filter: filter }),
+  });
+  if (res.ok) {
+    document.getElementById('broadcast-compose').value = '';
+    toast('✅ Added to queue — review and approve below', 'success');
+    loadBroadcasts();
+  } else {
+    toast('Failed to create broadcast', 'error');
+  }
+}
+
+async function approveBroadcast(id) {
+  if (!confirm('Are you sure? This will send the message to your WhatsApp groups once the helper picks it up.')) return;
+  const res = await apiFetch(`/api/broadcasts/${id}/approve`, { method: 'POST' });
+  if (res.ok) {
+    toast('✅ Approved! Helper will send within 30 seconds.', 'success');
+    loadBroadcasts();
+    // Auto-refresh while sending
+    const interval = setInterval(async () => {
+      const r = await apiFetch(`/api/broadcasts?limit=30`);
+      const data = await r.json();
+      renderBroadcasts(data);
+      const stillSending = data.some(b => b.status === 'sending' || b.status === 'approved');
+      if (!stillSending) clearInterval(interval);
+    }, 5000);
+  } else {
+    toast('Failed to approve', 'error');
+  }
+}
+
+async function deleteBroadcast(id) {
+  if (!confirm('Delete this draft?')) return;
+  const res = await apiFetch(`/api/broadcasts/${id}`, { method: 'DELETE' });
+  if (res.ok) { toast('Deleted', 'info'); loadBroadcasts(); }
+  else toast('Could not delete', 'error');
+}
+
 // ── Secret setup ─────────────────────────────────────────────────
 function promptSecret() {
   const s = prompt('Enter your dashboard secret (from .env DASHBOARD_SECRET):\n(Leave blank if not configured)');
@@ -505,6 +610,6 @@ document.addEventListener('DOMContentLoaded', () => {
   navigate('home');
   updateTaskBadge();
   loadStats();
-  // Refresh home stats every 5 minutes automatically
+  loadBroadcasts(); // Preload broadcast badge
   setInterval(loadStats, 5 * 60 * 1000);
 });
