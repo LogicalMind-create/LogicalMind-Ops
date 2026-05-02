@@ -25,17 +25,20 @@ const chatLimiter = rateLimit({
 
 // ─── Simple auth middleware ──────────────────────────────────────────────────
 function authMiddleware(req, res, next) {
-  // Skip auth entirely in local development
-  if (process.env.NODE_ENV === 'development') return next();
-
   const secret = process.env.DASHBOARD_SECRET;
+  // No secret configured — open access (dev/test)
   if (!secret) return next();
-
+  // Development — skip auth
+  if (process.env.NODE_ENV !== 'production') return next();
+  // Same-origin requests from the dashboard (Referer matches host)
+  const referer = req.headers['referer'] || req.headers['origin'] || '';
+  const host = req.headers['host'] || '';
+  if (referer.includes(host)) return next();
+  // Explicit secret header
   const provided = req.headers['x-dashboard-secret'];
-  if (provided !== secret) {
-    return res.status(401).json({ error: 'Unauthorized' });
-  }
-  next();
+  if (provided === secret) return next();
+
+  return res.status(401).json({ error: 'Unauthorized' });
 }
 
 // ─── Routes ─────────────────────────────────────────────────────────────────
@@ -64,8 +67,7 @@ app.use((err, req, res, next) => {
 // ─── Start ───────────────────────────────────────────────────────────────────
 app.listen(PORT, () => {
   console.log(`\n🚀 LogicalMind Ops running on http://localhost:${PORT}`);
-  console.log(`   Phase 1 — AI agent + task board active`);
-  console.log(`   Phase 2 — Orders (SmartBiz → Shiprocket) active`);
+  console.log(`   Phase 2 — AI agent + tasks + orders + Shiprocket active`);
   console.log(`   Health: http://localhost:${PORT}/health\n`);
 });
 
