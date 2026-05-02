@@ -23,11 +23,12 @@ const fs     = require('fs');
 const fetch  = (...args) => import('node-fetch').then(({ default: f }) => f(...args));
 
 // ── Config ────────────────────────────────────────────────────────────────────
-const SERVER_URL      = process.env.SERVER_URL || 'http://localhost:3000';
-const DASHBOARD_SECRET = process.env.DASHBOARD_SECRET || '';
-const POLL_MS         = Number(process.env.POLL_INTERVAL_MS) || 30_000;
-const SESSION_DIR     = path.join(__dirname, 'wa-session');
-const GROUPS_FILE     = path.join(__dirname, 'groups.json');
+const SERVER_URL              = process.env.SERVER_URL || 'http://localhost:3000';
+const DASHBOARD_SECRET        = process.env.DASHBOARD_SECRET || '';
+const POLL_MS                 = Number(process.env.POLL_INTERVAL_MS) || 30_000;
+const SESSION_DIR             = path.join(__dirname, 'wa-session');
+const GROUPS_FILE             = path.join(__dirname, 'groups.json');
+const WHATSAPP_GROUP_CHANNEL_RINGS_NAME = process.env.WHATSAPP_GROUP_CHANNEL_RINGS_NAME || '';
 
 // ── Human-behaviour helpers ───────────────────────────────────────────────────
 const rand  = (min, max) => Math.floor(Math.random() * (max - min + 1)) + min;
@@ -156,8 +157,21 @@ async function runBroadcast(broadcast) {
   // Apply group_filter
   if (broadcast.group_filter && broadcast.group_filter !== 'all') {
     const filter = broadcast.group_filter.toLowerCase();
-    groups = groups.filter(g => g.toLowerCase().includes(filter));
-    console.log(`[Helper] Filter "${broadcast.group_filter}" matched ${groups.length} groups`);
+
+    // Special case: channel_rings (alerts to team group only)
+    if (filter === 'channel_rings') {
+      if (!WHATSAPP_GROUP_CHANNEL_RINGS_NAME) {
+        console.error('[Helper] ❌ WHATSAPP_GROUP_CHANNEL_RINGS_NAME not set in .env — cannot send to Channel Rings');
+        console.error('[Helper] Run discover-groups.js, find "Channel Rings", and add to .env');
+        return;
+      }
+      groups = [WHATSAPP_GROUP_CHANNEL_RINGS_NAME];
+      console.log(`[Helper] Special filter "channel_rings" → sending only to Channel Rings team group`);
+    } else {
+      // Regular filter (dsc, tet, general, etc.)
+      groups = groups.filter(g => g.toLowerCase().includes(filter));
+      console.log(`[Helper] Filter "${broadcast.group_filter}" matched ${groups.length} groups`);
+    }
   }
 
   const total = groups.length;

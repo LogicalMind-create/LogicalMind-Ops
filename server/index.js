@@ -51,6 +51,7 @@ app.use('/api/broadcasts', authMiddleware, require('./routes/broadcasts'));
 
 // Webhooks (no auth middleware because external services call this)
 app.use('/webhooks/shiprocket', require('./webhooks/shiprocket'));
+app.use('/webhooks/telegram', require('./webhooks/telegram'));
 
 // Catch-all: serve dashboard SPA with secret embedded
 app.get('*', (req, res) => {
@@ -74,7 +75,15 @@ app.use((err, req, res, next) => {
 app.listen(PORT, () => {
   console.log(`\n🚀 LogicalMind Ops running on http://localhost:${PORT}`);
   console.log(`   Phase 2 — AI agent + tasks + orders + Shiprocket active`);
+  console.log(`   Phase 3 — WhatsApp broadcasts + order alerts active`);
   console.log(`   Health: http://localhost:${PORT}/health\n`);
+
+  // Start order poller for Channel Rings alerts
+  if (process.env.WHATSAPP_GROUP_CHANNEL_RINGS) {
+    require('./jobs/orderPoller').start();
+  } else {
+    console.warn('[⚠️  Warning] WHATSAPP_GROUP_CHANNEL_RINGS not set — order alerts disabled');
+  }
 });
 
 module.exports = app;
