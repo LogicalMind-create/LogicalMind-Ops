@@ -1,0 +1,31 @@
+{
+  "name": "logicalmind-ops",
+  "version": "1.0.0",
+  "description": "AI-agent operations dashboard for Logical Mind Education",
+  "main": "server/index.js",
+  "scripts": {
+    "start": "node server/index.js",
+    "dev": "node --watch server/index.js"
+  },
+  "engines": {
+    "node": ">=18.0.0"
+  },
+  "keywords": [],
+  "author": "Logical Mind Education",
+  "license": "UNLICENSED",
+  "private": true,
+  "dependencies": {
+    "@google/generative-ai": "^0.24.1",
+    "@supabase/supabase-js": "^2.105.1",
+    "axios": "^1.9.0",
+    "cors": "^2.8.6",
+    "dotenv": "^17.4.2",
+    "express": "^5.2.1",
+    "express-rate-limit": "^8.4.1",
+    "node-telegram-bot-api": "^0.67.0",
+    "uuid": "^14.0.0"
+  },
+  "devDependencies": {
+    "playwright": "^1.52.0"
+  }
+}

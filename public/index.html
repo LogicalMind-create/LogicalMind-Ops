@@ -1,0 +1,308 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>LogicalMind Ops — AI Operations Dashboard</title>
+  <meta name="description" content="Internal AI-agent operations dashboard for Logical Mind Education — orders, tasks, WhatsApp broadcasting, and finance in one place." />
+  <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'><rect width='32' height='32' rx='8' fill='%234f7dff'/><text x='7' y='23' font-size='18'>⚡</text></svg>" />
+  <link rel="stylesheet" href="style.css" />
+</head>
+<body>
+
+<div class="app">
+
+  <!-- ── Top Bar ─────────────────────────────────────────── -->
+  <header class="topbar">
+    <div class="topbar-logo">
+      <div class="dot">⚡</div>
+      LogicalMind Ops
+      <span class="topbar-phase">Phase 2</span>
+    </div>
+    <div class="topbar-right">
+      <div class="status-dot" title="Server online"></div>
+      <span class="topbar-time" id="topbar-time"></span>
+      <button class="btn btn-ghost" style="font-size:11px;padding:5px 10px" onclick="promptSecret()">🔑 Auth</button>
+    </div>
+  </header>
+
+  <!-- ── Sidebar ─────────────────────────────────────────── -->
+  <nav class="sidebar">
+    <span class="nav-label">Main</span>
+    <button id="nav-home" class="nav-item" onclick="navigate('home')">
+      <span class="icon">🏠</span> Home
+    </button>
+    <button id="nav-chat" class="nav-item" onclick="navigate('chat')">
+      <span class="icon">🤖</span> AI Agent
+    </button>
+    <button id="nav-tasks" class="nav-item" onclick="navigate('tasks')">
+      <span class="icon">📋</span> Tasks
+      <span class="nav-badge" id="task-badge">0</span>
+    </button>
+    <button id="nav-orders" class="nav-item" onclick="navigate('orders')">
+      <span class="icon">📦</span> Orders
+      <span class="nav-badge nav-badge-warn" id="order-badge" style="display:none">!</span>
+    </button>
+
+    <span class="nav-label">Coming Soon</span>
+    <button class="nav-item" style="opacity:.4;cursor:not-allowed" disabled>
+      <span class="icon">💬</span> WhatsApp
+    </button>
+    <button class="nav-item" style="opacity:.4;cursor:not-allowed" disabled>
+      <span class="icon">💰</span> Finance
+    </button>
+    <button class="nav-item" style="opacity:.4;cursor:not-allowed" disabled>
+      <span class="icon">🔔</span> Notifications
+    </button>
+  </nav>
+
+  <!-- ══════════════════════════════════════════════════════
+       MAIN CONTENT
+  ═══════════════════════════════════════════════════════ -->
+  <main class="main">
+
+    <!-- ── HOME PAGE ───────────────────────────────────── -->
+    <section id="page-home" class="page">
+
+      <div>
+        <h1 style="font-size:22px;font-weight:700;margin-bottom:4px">Good day, team! 👋</h1>
+        <p style="color:var(--muted);font-size:13px">Your Logical Mind Education command center.</p>
+      </div>
+
+      <div class="stat-grid">
+        <div class="stat-card">
+          <div class="stat-label">Pending Tasks</div>
+          <div class="stat-value" id="stat-pending-tasks">—</div>
+          <div class="stat-sub">across all team members</div>
+        </div>
+        <div class="stat-card" id="stat-card-orders" onclick="navigate('orders')" style="cursor:pointer">
+          <div class="stat-label">Today's Orders</div>
+          <div class="stat-value" id="stat-today-orders">—</div>
+          <div class="stat-sub" id="stat-delayed-orders">Loading…</div>
+        </div>
+        <div class="stat-card" id="stat-card-pending-orders" onclick="navigate('orders')" style="cursor:pointer">
+          <div class="stat-label">Pending Shipment</div>
+          <div class="stat-value" id="stat-pending-orders">—</div>
+          <div class="stat-sub">awaiting dispatch</div>
+        </div>
+        <div class="stat-card" style="opacity:.5">
+          <div class="stat-label">WA Groups</div>
+          <div class="stat-value">43</div>
+          <div class="stat-sub">Phase 3</div>
+        </div>
+      </div>
+
+      <div class="card">
+        <div class="card-title">What can the agent do today?</div>
+        <div class="welcome-grid">
+          <div class="welcome-card" onclick="navigate('chat')">
+            <div class="wc-icon">📋</div>
+            <div class="wc-title">Manage Tasks</div>
+            <div class="wc-desc">Assign tasks to yourself or your teammate, list pending work, mark things done.</div>
+            <span class="wc-phase">Live — Phase 1</span>
+          </div>
+          <div class="welcome-card" onclick="navigate('chat')">
+            <div class="wc-icon">📢</div>
+            <div class="wc-title">Notify Team</div>
+            <div class="wc-desc">Send urgent messages or FYIs to your Telegram team group instantly.</div>
+            <span class="wc-phase">Live — Phase 1</span>
+          </div>
+          <div class="welcome-card" onclick="navigate('orders')">
+            <div class="wc-icon">📦</div>
+            <div class="wc-title">Ship Orders</div>
+            <div class="wc-desc">Amazon SmartBiz → Shiprocket pipeline. New orders auto-appear; ship with one command to the agent.</div>
+            <span class="wc-phase">Live — Phase 2</span>
+          </div>
+          <div class="welcome-card">
+            <div class="wc-icon">🔍</div>
+            <div class="wc-title">Track Shipments</div>
+            <div class="wc-desc">Ask the agent to track any AWB. Shiprocket pushes delivery updates automatically.</div>
+            <span class="wc-phase">Live — Phase 2</span>
+          </div>
+          <div class="welcome-card">
+            <div class="wc-icon">💬</div>
+            <div class="wc-title">Broadcast to 43 Groups</div>
+            <div class="wc-desc">Agent drafts → you approve → WhatsApp Helper fans out to all 43 groups in ~2 min.</div>
+            <span class="wc-phase soon">Phase 3</span>
+          </div>
+          <div class="welcome-card">
+            <div class="wc-icon">💰</div>
+            <div class="wc-title">Finance Tracking</div>
+            <div class="wc-desc">Log income and expenses, get monthly summaries, clear month-end with one click.</div>
+            <span class="wc-phase soon">Phase 4</span>
+          </div>
+        </div>
+      </div>
+
+    </section>
+
+    <!-- ── CHAT / AI AGENT PAGE ─────────────────────────── -->
+    <section id="page-chat" class="page">
+
+      <div style="display:flex;align-items:center;gap:12px">
+        <div>
+          <h2 style="font-size:18px;font-weight:700">AI Agent</h2>
+          <p style="color:var(--muted);font-size:12px">Powered by Gemini 2.5 Flash · function-calling enabled</p>
+        </div>
+        <button class="btn btn-ghost" style="margin-left:auto;font-size:12px" onclick="clearChat()">🔄 New chat</button>
+      </div>
+
+      <div class="chat-layout">
+
+        <!-- Chat window -->
+        <div class="chat-panel">
+          <div class="chat-messages" id="chat-messages">
+            <div class="chat-message agent">
+              <div class="chat-avatar">🤖</div>
+              <div class="chat-bubble">
+                Namaste! I'm your LogicalMind Ops agent 🙏<br><br>
+                I can help you manage tasks, ship SmartBiz orders via Shiprocket, track shipments, and send Telegram alerts.<br><br>
+                What do you need?
+              </div>
+            </div>
+          </div>
+          <div class="chat-input-area">
+            <textarea id="chat-input" class="chat-input" rows="1"
+              placeholder="Type a command… e.g. 'List pending orders' or 'Ship order ABC123'"
+            ></textarea>
+            <button id="btn-send" class="btn-send">➤</button>
+          </div>
+        </div>
+
+        <!-- Suggestions sidebar -->
+        <div class="chat-sidebar">
+          <div class="suggestions-panel">
+            <div class="suggestions-title">💡 Try asking</div>
+
+            <div style="font-size:10px;color:var(--muted);text-transform:uppercase;letter-spacing:.06em;margin-bottom:6px;margin-top:4px">Tasks</div>
+            <button class="suggestion-chip" data-msg="Add a task for me to call the printer tomorrow">
+              📌 Add a task for me to call the printer tomorrow
+            </button>
+            <button class="suggestion-chip" data-msg="What are my pending tasks for this week?">
+              📋 What are my pending tasks?
+            </button>
+            <button class="suggestion-chip" data-msg="Mark the printer task as done">
+              ✅ Mark a task as done
+            </button>
+
+            <div style="font-size:10px;color:var(--muted);text-transform:uppercase;letter-spacing:.06em;margin-bottom:6px;margin-top:10px">Orders & Shipping</div>
+            <button class="suggestion-chip" data-msg="List all pending orders and flag any that are delayed">
+              📦 List pending orders (with delays)
+            </button>
+            <button class="suggestion-chip" data-msg="Are there any orders waiting for shipment for more than 2 days?">
+              ⚠️ Any delayed orders?
+            </button>
+            <button class="suggestion-chip" data-msg="List all shipped orders">
+              🚚 Show shipped orders
+            </button>
+
+            <div style="font-size:10px;color:var(--muted);text-transform:uppercase;letter-spacing:.06em;margin-bottom:6px;margin-top:10px">Team</div>
+            <button class="suggestion-chip" data-msg="Send a team alert: TET mock test tonight at 8pm">
+              📢 Send a team Telegram alert
+            </button>
+            <button class="suggestion-chip" data-msg="What can you do right now?">
+              🤖 What can you do?
+            </button>
+          </div>
+
+          <div class="card" style="padding:14px">
+            <div style="font-size:11px;color:var(--muted);font-weight:600;text-transform:uppercase;letter-spacing:.06em;margin-bottom:8px">
+              Tips
+            </div>
+            <p style="font-size:12px;color:var(--muted);line-height:1.6">
+              • Shift+Enter for new line<br>
+              • Agent remembers your conversation until you clear it<br>
+              • Task changes appear instantly on the Tasks page<br>
+              • Order changes appear instantly on the Orders page
+            </p>
+          </div>
+        </div>
+
+      </div>
+    </section>
+
+    <!-- ── TASKS PAGE ───────────────────────────────────── -->
+    <section id="page-tasks" class="page">
+
+      <div class="tasks-header">
+        <h2>Task Board</h2>
+        <div class="filter-row" style="margin-left:auto">
+          <button class="filter-btn active" data-filter="pending" onclick="setTaskFilter('pending')">Pending</button>
+          <button class="filter-btn" data-filter="done" onclick="setTaskFilter('done')">Done</button>
+          <button class="filter-btn" data-filter="all" onclick="setTaskFilter('all')">All</button>
+        </div>
+      </div>
+
+      <!-- Quick-add form -->
+      <div class="card">
+        <div class="card-title">Quick Add Task</div>
+        <div class="add-task-form">
+          <div class="form-group">
+            <label class="form-label" for="new-person">Person</label>
+            <input id="new-person" class="form-input" type="text" placeholder="me / Ravi" style="width:120px" />
+          </div>
+          <div class="form-group" style="flex:1;min-width:180px">
+            <label class="form-label" for="new-title">Task</label>
+            <input id="new-title" class="form-input" type="text" placeholder="What needs to be done?" />
+          </div>
+          <div class="form-group">
+            <label class="form-label" for="new-due">Due Date</label>
+            <input id="new-due" class="form-input" type="date" style="width:150px" />
+          </div>
+          <button class="btn btn-primary" style="margin-top:18px" onclick="addTaskManual()">+ Add</button>
+        </div>
+      </div>
+
+      <!-- Task list -->
+      <div id="task-list" class="task-list">
+        <div class="empty-state">
+          <div class="emoji">⏳</div>
+          <p>Loading tasks…</p>
+        </div>
+      </div>
+
+    </section>
+
+    <!-- ── ORDERS PAGE ──────────────────────────────────── -->
+    <section id="page-orders" class="page">
+
+      <div class="tasks-header">
+        <h2>Orders — SmartBiz → Shiprocket</h2>
+        <div class="filter-row" style="margin-left:auto">
+          <button class="filter-btn active" data-filter="pending" onclick="setOrderFilter('pending')">Pending</button>
+          <button class="filter-btn" data-filter="shipped" onclick="setOrderFilter('shipped')">Shipped</button>
+          <button class="filter-btn" data-filter="delivered" onclick="setOrderFilter('delivered')">Delivered</button>
+          <button class="filter-btn" data-filter="all" onclick="setOrderFilter('all')">All</button>
+        </div>
+        <button class="btn btn-ghost" style="font-size:12px;margin-left:8px" onclick="loadOrders()">🔄 Refresh</button>
+      </div>
+
+      <!-- Orders info banner -->
+      <div class="card" style="padding:14px 18px;border-left:3px solid var(--accent)">
+        <p style="font-size:13px;color:var(--muted);line-height:1.6;margin:0">
+          Orders are scraped from Amazon SmartBiz automatically every 10 min via GitHub Actions.
+          To ship an order, click <strong>Ship via Agent</strong> or type
+          <em>"Ship order [ID]"</em> in the AI Agent chat.
+          Orders pending for <strong style="color:#f59e0b">≥ 2 days</strong> are flagged as delayed.
+        </p>
+      </div>
+
+      <!-- Order list -->
+      <div id="order-list">
+        <div class="empty-state">
+          <div class="emoji">⏳</div>
+          <p>Loading orders…</p>
+        </div>
+      </div>
+
+    </section>
+
+  </main>
+</div>
+
+<!-- Toast container -->
+<div id="toast-container"></div>
+
+<script src="app.js"></script>
+</body>
+</html>
