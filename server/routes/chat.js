@@ -39,18 +39,15 @@ router.post('/', async (req, res) => {
       tools_used: toolsUsed,
     });
   } catch (err) {
-    console.error('[Chat route] Error:', err);
+    console.error('[Chat route] Error:', err.message, err.stack?.split('\n')[1]);
 
-    // Gemini API errors
     if (err.message?.includes('API_KEY')) {
-      return res.status(503).json({
-        error: 'AI service not configured. Check GEMINI_API_KEY in .env',
-      });
+      return res.status(503).json({ error: 'AI service not configured. Check GEMINI_API_KEY.' });
     }
 
     return res.status(500).json({
       error: 'Agent encountered an error. Please try again.',
-      detail: process.env.NODE_ENV === 'development' ? err.message : undefined,
+      detail: err.message, // always expose so Render logs + UI show the real cause
     });
   }
 });

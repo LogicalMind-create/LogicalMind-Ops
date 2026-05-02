@@ -15,16 +15,15 @@ module.exports = {
       'The message goes into an approval queue — you must approve it in the dashboard before it sends. ' +
       'Use this for TET updates, mock test announcements, holiday notices, etc.',
     parameters: {
-      type: 'object',
+      type: 'OBJECT',
       properties: {
         message: {
-          type: 'string',
+          type: 'STRING',
           description: 'The message text to send to the WhatsApp groups (plain text, emojis allowed)',
         },
         group_filter: {
-          type: 'string',
-          description: 'Which groups to send to: "all" (default) or a specific subset like "TET groups only"',
-          enum: ['all', 'tet', 'dsc', 'general'],
+          type: 'STRING',
+          description: 'Which groups to send to: all (default), tet, dsc, or general',
         },
       },
       required: ['message'],
