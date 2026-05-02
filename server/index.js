@@ -45,6 +45,7 @@ app.use('/api/broadcasts', authMiddleware, require('./routes/broadcasts'));
 
 // Webhooks (no auth — external services call these)
 app.use('/webhooks/shiprocket', require('./webhooks/shiprocket'));
+app.use('/webhooks/telegram', require('./webhooks/telegram'));
 
 // Catch-all: serve dashboard SPA
 app.use((req, res) => {
@@ -66,6 +67,13 @@ app.listen(PORT, () => {
   console.log(`   Phase 2 — Orders + Shiprocket active`);
   console.log(`   Phase 3 — WhatsApp broadcasts active`);
   console.log(`   Health: http://localhost:${PORT}/health\n`);
+
+  // Start order poller for Channel Rings alerts
+  if (process.env.WHATSAPP_GROUP_CHANNEL_RINGS_NAME) {
+    require('./jobs/orderPoller').start();
+  } else {
+    console.warn('[⚠️  Warning] WHATSAPP_GROUP_CHANNEL_RINGS_NAME not set — order alerts disabled');
+  }
 });
 
 module.exports = app;
