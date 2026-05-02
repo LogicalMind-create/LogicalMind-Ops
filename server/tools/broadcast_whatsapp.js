@@ -8,7 +8,7 @@ const supabase = createClient(process.env.SUPABASE_URL, process.env.SUPABASE_SER
  * The local helper picks it up and sends via WhatsApp Web.
  */
 module.exports = {
-  definition: {
+  declaration: {
     name: 'broadcast_whatsapp',
     description:
       'Queue a message to be broadcast to all 43 WhatsApp student groups. ' +
