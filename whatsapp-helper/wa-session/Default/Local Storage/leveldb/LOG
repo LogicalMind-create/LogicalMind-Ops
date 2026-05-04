@@ -1,3 +1,5 @@
-2026/05/03-03:45:39.937 5004 Reusing MANIFEST C:\Users\kumar\OneDrive\Desktop\LogicalMind_Ops\whatsapp-helper\wa-session\Default\Local Storage\leveldb/MANIFEST-000001
-2026/05/03-03:45:39.942 5004 Recovering log #3
-2026/05/03-03:45:39.945 5004 Reusing old log C:\Users\kumar\OneDrive\Desktop\LogicalMind_Ops\whatsapp-helper\wa-session\Default\Local Storage\leveldb/000003.log 
+2026/05/04-13:06:13.550 7f40 Reusing MANIFEST C:\Users\kumar\OneDrive\Desktop\LogicalMind_Ops\whatsapp-helper\wa-session\Default\Local Storage\leveldb/MANIFEST-000001
+2026/05/04-13:06:13.560 7f40 Recovering log #3
+2026/05/04-13:06:13.563 7f40 Reusing old log C:\Users\kumar\OneDrive\Desktop\LogicalMind_Ops\whatsapp-helper\wa-session\Default\Local Storage\leveldb/000003.log 
+2026/05/04-13:07:11.273 3604 Level-0 table #5: started
+2026/05/04-13:07:11.334 3604 Level-0 table #5: 21018 bytes OK

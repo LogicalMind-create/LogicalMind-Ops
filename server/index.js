@@ -14,10 +14,11 @@ app.use(cors());
 app.use(express.json());
 app.use(express.static(path.join(__dirname, '../public')));
 
-// Rate limit chat endpoint — Gemini free tier: 15 req/min
+// Groq llama-3.3-70b: 30 requests/minute limit (https://console.groq.com/docs/rate-limits)
+// We use 60/min to leave headroom and allow multi-turn agent loops
 const chatLimiter = rateLimit({
   windowMs: 60 * 1000,
-  max: 12,
+  max: 60,
   message: { error: 'Too many requests. Please wait a moment.' },
   standardHeaders: true,
   legacyHeaders: false,
@@ -26,11 +27,11 @@ const chatLimiter = rateLimit({
 // ─── Auth middleware ─────────────────────────────────────────────────────────
 function authMiddleware(req, res, next) {
   const secret = process.env.DASHBOARD_SECRET;
-  if (!secret) return next();
-  if (process.env.NODE_ENV !== 'production') return next();
-  const referer = req.headers['referer'] || req.headers['origin'] || '';
-  const host    = req.headers['host'] || '';
-  if (referer.includes(host)) return next();
+  if (!secret) {
+    console.warn('[⚠️  Auth] DASHBOARD_SECRET not set. Dashboard is unprotected.');
+    return next();
+  }
+  // Apply auth check in ALL environments (no dev bypass)
   const provided = req.headers['x-dashboard-secret'];
   if (provided === secret) return next();
   return res.status(401).json({ error: 'Unauthorized' });

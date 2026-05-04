@@ -42,7 +42,7 @@ router.post('/', async (req, res) => {
     console.error('[Chat route] Error:', err.message, err.stack?.split('\n')[1]);
 
     if (err.message?.includes('API_KEY')) {
-      return res.status(503).json({ error: 'AI service not configured. Check GEMINI_API_KEY.' });
+      return res.status(503).json({ error: 'AI service not configured. Check GROQ_API_KEY.' });
     }
 
     return res.status(500).json({

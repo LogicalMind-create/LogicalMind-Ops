@@ -4,6 +4,11 @@
  * Scrapes Amazon SmartBiz orders and upserts them into Supabase.
  * Run via GitHub Actions every 10 minutes.
  *
+ * FEATURES:
+ *  - Extracts order list from SmartBiz orders page
+ *  - Navigates INTO each order's detail page to extract customer address
+ *  - Upserts orders with full customer data (name, phone, email, address)
+ *
  * EXIT CODES:
  *  0 — Success (even if 0 orders found, that's valid)
  *  1 — Fatal error (login failed, OTP challenge, unrecoverable error)
@@ -61,7 +66,172 @@ async function safeClick(page, selectorList, label) {
       }
     } catch (_) {}
   }
-  return false; // Not an error — some fields are optional (e.g., Continue button might not exist)
+  return false;
+}
+
+// ── Helper: extract text from first matching selector ────────────
+async function extractText(page, selectorList, fallback = '') {
+  for (const sel of selectorList) {
+    try {
+      const el = page.locator(sel).first();
+      if (await el.isVisible({ timeout: 3000 }).catch(() => false)) {
+        const text = await el.innerText();
+        if (text && text.trim()) return text.trim();
+      }
+    } catch (_) {}
+  }
+  return fallback;
+}
+
+// ── Helper: extract customer address from order detail page ──────
+async function extractCustomerAddress(page) {
+  const address = {
+    customer_name: '',
+    customer_phone: '',
+    customer_email: '',
+    address_line1: '',
+    address_line2: '',
+    city: '',
+    state: '',
+    pincode: '',
+  };
+
+  try {
+    // Wait for the detail page to load
+    await page.waitForLoadState('domcontentloaded', { timeout: 10000 }).catch(() => {});
+    await randomDelay(1500, 2500);
+
+    // Full page text for regex extraction
+    const pageText = await page.evaluate(() => document.body.innerText || '').catch(() => '');
+
+    // ── Extract buyer/customer name ──────────────────────────────
+    address.customer_name = await extractText(page, [
+      '[data-testid="buyer-name"]',
+      '[class*="buyerName"]',
+      '[class*="BuyerName"]',
+      '[class*="customer-name"]',
+      '[class*="CustomerName"]',
+      'div:has-text("Buyer") + div',
+      'span:has-text("Buyer") + span',
+    ]);
+
+    // Fallback: find "Buyer:" or "Customer:" label in page text
+    if (!address.customer_name) {
+      const buyerMatch = pageText.match(/(?:Buyer|Customer)\s*(?:Name)?[\s:]+([^\n]+)/i);
+      if (buyerMatch) address.customer_name = buyerMatch[1].trim();
+    }
+
+    // ── Extract phone number ────────────────────────────────────
+    address.customer_phone = await extractText(page, [
+      '[data-testid="buyer-phone"]',
+      '[class*="phone"]',
+      '[class*="Phone"]',
+      '[class*="mobile"]',
+    ]);
+
+    // Fallback: regex for Indian phone numbers
+    if (!address.customer_phone) {
+      const phoneMatch = pageText.match(/(?:Phone|Mobile|Contact)[\s:]+(\+?91[\s-]?\d{10}|\d{10})/i);
+      if (phoneMatch) address.customer_phone = phoneMatch[1].replace(/[\s-]/g, '');
+    }
+
+    // ── Extract email ───────────────────────────────────────────
+    address.customer_email = await extractText(page, [
+      '[data-testid="buyer-email"]',
+      '[class*="email"]',
+      '[class*="Email"]',
+    ]);
+
+    if (!address.customer_email) {
+      const emailMatch = pageText.match(/(?:Email)[\s:]+([a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,})/i);
+      if (emailMatch) address.customer_email = emailMatch[1];
+    }
+
+    // ── Extract shipping address block ──────────────────────────
+    // Try structured selectors first
+    const addressBlock = await extractText(page, [
+      '[data-testid="shipping-address"]',
+      '[class*="shippingAddress"]',
+      '[class*="ShippingAddress"]',
+      '[class*="shipping-address"]',
+      '[class*="delivery-address"]',
+      '[class*="DeliveryAddress"]',
+      '[data-testid="address-block"]',
+    ]);
+
+    if (addressBlock) {
+      // Parse the address block — typically multi-line
+      const lines = addressBlock.split('\n').map(l => l.trim()).filter(Boolean);
+
+      // First line is usually the name (already have it), skip if matches
+      let startIdx = 0;
+      if (lines[0] && address.customer_name && lines[0].includes(address.customer_name)) {
+        startIdx = 1;
+      }
+
+      // Look for pincode pattern (6 digits) to identify city/state/pincode line
+      const pincodeLineIdx = lines.findIndex(l => /\b\d{6}\b/.test(l));
+
+      if (pincodeLineIdx >= 0) {
+        // Everything before pincode line is address
+        const addressLines = lines.slice(startIdx, pincodeLineIdx);
+        address.address_line1 = addressLines[0] || '';
+        address.address_line2 = addressLines.slice(1).join(', ');
+
+        // Parse city, state, pincode from the pincode line
+        const pLine = lines[pincodeLineIdx];
+        const pinMatch = pLine.match(/\b(\d{6})\b/);
+        if (pinMatch) address.pincode = pinMatch[1];
+
+        // Try to split "City, State PIN" or "City, State - PIN"
+        const cityStateMatch = pLine.match(/^([^,]+),\s*([^,\d-]+)/);
+        if (cityStateMatch) {
+          address.city = cityStateMatch[1].trim();
+          address.state = cityStateMatch[2].trim();
+        } else {
+          // Just use what's before the pincode
+          const beforePin = pLine.replace(/\b\d{6}\b/, '').replace(/[-,]/g, ' ').trim();
+          const parts = beforePin.split(/\s{2,}/).filter(Boolean);
+          if (parts.length >= 2) {
+            address.city = parts[0];
+            address.state = parts[1];
+          } else if (parts.length === 1) {
+            address.city = parts[0];
+          }
+        }
+      } else {
+        // No pincode line found — just use the raw lines
+        address.address_line1 = lines[startIdx] || '';
+        address.address_line2 = lines.slice(startIdx + 1).join(', ');
+      }
+    }
+
+    // ── Fallback: regex extraction from full page text ───────────
+    if (!address.pincode) {
+      const pinMatch = pageText.match(/(?:Pin\s*code|PIN|Zip)[\s:]+(\d{6})/i);
+      if (pinMatch) address.pincode = pinMatch[1];
+    }
+
+    if (!address.city) {
+      const cityMatch = pageText.match(/(?:City|Town)[\s:]+([^\n,]+)/i);
+      if (cityMatch) address.city = cityMatch[1].trim();
+    }
+
+    if (!address.state) {
+      const stateMatch = pageText.match(/(?:State|Province)[\s:]+([^\n,]+)/i);
+      if (stateMatch) address.state = stateMatch[1].trim();
+    }
+
+    if (!address.address_line1) {
+      const addrMatch = pageText.match(/(?:Address|Street|Ship to)[\s:]+([^\n]+)/i);
+      if (addrMatch) address.address_line1 = addrMatch[1].trim();
+    }
+
+  } catch (err) {
+    console.warn(`[SmartBiz Scraper] ⚠ Error extracting customer address: ${err.message}`);
+  }
+
+  return address;
 }
 
 (async () => {
@@ -107,7 +277,7 @@ async function safeClick(page, selectorList, label) {
     }
     await randomDelay(500, 1000);
 
-    // Continue / Next button (optional — some Amazon pages go directly to password)
+    // Continue / Next button
     await safeClick(
       page,
       ['input[type="submit"]', '#continue', 'button[type="submit"]', 'input#continue'],
@@ -146,11 +316,9 @@ async function safeClick(page, selectorList, label) {
       currentUrl.includes('challenge') ||
       currentUrl.includes('ap/mfa') ||
       currentUrl.includes('cvf') ||
-      currentUrl.includes('ap/signin') // Still on sign-in = login failed
+      currentUrl.includes('ap/signin')
     ) {
       await browser.close();
-      // ⚠ EXIT CODE 1 — GitHub Actions will send failure email
-      // This is INTENTIONAL: the team must know the scraper needs attention
       console.error('[SmartBiz Scraper] ❌ Login challenge detected (OTP/passkey/CAPTCHA) OR login failed.');
       console.error('[SmartBiz Scraper] ACTION REQUIRED: Log in manually to SmartBiz once, or disable 2FA for this account.');
       console.error('[SmartBiz Scraper] Current URL:', currentUrl);
@@ -165,8 +333,7 @@ async function safeClick(page, selectorList, label) {
     });
     await randomDelay(2000, 3500);
 
-    // ── STEP 3: Extract orders ──────────────────────────────────
-    // SmartBiz is a React SPA — we try multiple selectors and fallback strategies
+    // ── STEP 3: Extract basic order info from listing page ───────
     const orderSelectors = [
       '[data-testid="order-row"]',
       '.order-item',
@@ -189,12 +356,12 @@ async function safeClick(page, selectorList, label) {
     if (!selectorMatched) {
       console.warn('[SmartBiz Scraper] ⚠ No order rows found with known selectors.');
       console.warn('[SmartBiz Scraper] This could mean: 0 orders, or the page structure changed.');
-      // Take a screenshot for debugging
       const screenshotPath = '/tmp/smartbiz-debug.png';
       await page.screenshot({ path: screenshotPath }).catch(() => {});
       console.log(`[SmartBiz Scraper] Debug screenshot saved to: ${screenshotPath}`);
     }
 
+    // Extract basic order info + clickable links from listing page
     const orders = await page.evaluate(() => {
       const results = [];
       const normaliseStatus = (statusText = '') => {
@@ -206,7 +373,6 @@ async function safeClick(page, selectorList, label) {
         return 'pending';
       };
 
-      // Strategy 1: data-testid attributes (most reliable)
       const rows = document.querySelectorAll(
         '[data-testid="order-row"], .order-item, [class*="OrderRow"], [class*="orderCard"], [class*="order-card"]'
       );
@@ -218,7 +384,7 @@ async function safeClick(page, selectorList, label) {
         const orderIdMatch = textContent.match(/\d{3}-\d{7}-\d{7}/);
         const orderId = orderIdMatch ? orderIdMatch[0] : null;
 
-        // Extract product name — largest/most prominent text in the row
+        // Extract product name
         const titleEl = row.querySelector('h2, h3, [class*="title"], [class*="product"], [class*="name"], [class*="Title"]');
         const productName = titleEl ? titleEl.innerText.trim() : '';
 
@@ -226,6 +392,7 @@ async function safeClick(page, selectorList, label) {
         const statusEl = row.querySelector('[class*="status"], [class*="Status"], [data-testid*="status"]');
         const statusText = statusEl ? statusEl.innerText.trim().toLowerCase() : 'pending';
 
+        // Date
         const dateMatch = textContent.match(
           /\b(?:\d{1,2}\s+(?:Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Sept|Oct|Nov|Dec)[a-z]*\s+\d{4}|\d{1,2}[/-]\d{1,2}[/-]\d{2,4})\b/i
         );
@@ -235,9 +402,13 @@ async function safeClick(page, selectorList, label) {
         const amountMatch = textContent.match(/₹\s?[\d,]+\.?\d*/);
         const amount = amountMatch ? parseFloat(amountMatch[0].replace(/[₹,\s]/g, '')) : null;
 
-        // Customer name (often not shown in list view — leave blank)
+        // Customer name
         const customerEl = row.querySelector('[class*="customer"], [class*="buyer"], [class*="Buyer"]');
         const customerName = customerEl ? customerEl.innerText.trim() : '';
+
+        // Detail link (for navigating into the order)
+        const link = row.querySelector('a[href*="order"]');
+        const detailUrl = link ? link.href : null;
 
         if (orderId) {
           results.push({
@@ -250,6 +421,7 @@ async function safeClick(page, selectorList, label) {
             amount: amount,
             status: normaliseStatus(statusText),
             order_date: orderDate && !Number.isNaN(orderDate.getTime()) ? orderDate.toISOString() : null,
+            detail_url: detailUrl,
           });
         }
       });
@@ -257,17 +429,64 @@ async function safeClick(page, selectorList, label) {
       return results;
     });
 
-    console.log(`[SmartBiz Scraper] Found ${orders.length} orders on page.`);
+    console.log(`[SmartBiz Scraper] Found ${orders.length} orders on listing page.`);
 
-    // ── STEP 4: Upsert into Supabase ────────────────────────────
+    // ── STEP 4: Navigate into each order detail to get customer address ──
+    for (let i = 0; i < orders.length; i++) {
+      const order = orders[i];
+
+      // Only fetch details for orders that don't already have address in DB
+      const { data: existing } = await supabase
+        .from('orders')
+        .select('id, address_line1, customer_phone')
+        .eq('external_id', order.external_id)
+        .maybeSingle();
+
+      // Skip address extraction if we already have it
+      if (existing && existing.address_line1 && existing.customer_phone) {
+        console.log(`[SmartBiz Scraper] Skipping detail for ${order.external_id} — address already in DB`);
+        continue;
+      }
+
+      // Navigate to detail page
+      const detailUrl = order.detail_url || `https://smartbiz.amazon.in/orders/${order.external_id}`;
+      console.log(`[SmartBiz Scraper] [${i + 1}/${orders.length}] Fetching details for: ${order.external_id}`);
+
+      try {
+        await page.goto(detailUrl, { waitUntil: 'domcontentloaded', timeout: 15000 });
+        const addressData = await extractCustomerAddress(page);
+
+        // Merge address data into the order object
+        Object.assign(order, addressData);
+
+        // Use the detail page customer name if we didn't get one from the listing
+        if (!order.customer_name && addressData.customer_name) {
+          order.customer_name = addressData.customer_name;
+        }
+
+        const fieldsFound = Object.entries(addressData).filter(([_, v]) => v).map(([k]) => k);
+        console.log(`[SmartBiz Scraper]   Found: ${fieldsFound.join(', ') || '(none)'}`);
+      } catch (err) {
+        console.warn(`[SmartBiz Scraper]   ⚠ Could not load detail page: ${err.message}`);
+      }
+
+      // Human-like delay between detail page visits
+      await randomDelay(1500, 3000);
+    }
+
+    // ── STEP 5: Upsert into Supabase ────────────────────────────
     let newCount = 0;
     let updatedCount = 0;
+
     for (const order of orders) {
+      // Remove detail_url — not a DB column
+      delete order.detail_url;
+
       const { data: existing, error: fetchErr } = await supabase
         .from('orders')
-        .select('id, status, order_date')
+        .select('id, status, order_date, address_line1')
         .eq('external_id', order.external_id)
-        .maybeSingle(); // ← maybeSingle() doesn't throw if not found
+        .maybeSingle();
 
       if (fetchErr) {
         console.error(`[SmartBiz Scraper] Fetch failed for ${order.external_id}:`, fetchErr.message);
@@ -275,6 +494,7 @@ async function safeClick(page, selectorList, label) {
       }
 
       if (!existing) {
+        // New order — insert with all data
         const { error: insertErr } = await supabase.from('orders').insert([{
           ...order,
           scraped_at: new Date().toISOString(),
@@ -285,18 +505,43 @@ async function safeClick(page, selectorList, label) {
           newCount++;
           console.log(`[SmartBiz Scraper] ✅ Inserted: ${order.external_id} (${order.status})`);
         }
-      } else if (existing.status !== order.status || (!existing.order_date && order.order_date)) {
-        const { error: updateErr } = await supabase
-          .from('orders')
-          .update({
+      } else {
+        // Existing order — update status + address if newly scraped
+        const needsUpdate =
+          existing.status !== order.status ||
+          (!existing.order_date && order.order_date) ||
+          (!existing.address_line1 && order.address_line1);
+
+        if (needsUpdate) {
+          const updatePayload = {
             status: order.status,
-            order_date: existing.order_date || order.order_date,
             scraped_at: new Date().toISOString(),
-          })
-          .eq('external_id', order.external_id);
-        if (!updateErr) {
-          updatedCount++;
-          console.log(`[SmartBiz Scraper] 🔄 Updated: ${order.external_id} ${existing.status} → ${order.status}`);
+          };
+
+          // Only update address fields if we have new data and DB doesn't
+          if (!existing.address_line1 && order.address_line1) {
+            updatePayload.address_line1 = order.address_line1;
+            updatePayload.address_line2 = order.address_line2 || '';
+            updatePayload.city = order.city || '';
+            updatePayload.state = order.state || '';
+            updatePayload.pincode = order.pincode || '';
+            updatePayload.customer_phone = order.customer_phone || '';
+            updatePayload.customer_email = order.customer_email || '';
+            if (order.customer_name) updatePayload.customer_name = order.customer_name;
+          }
+
+          if (!existing.order_date && order.order_date) {
+            updatePayload.order_date = order.order_date;
+          }
+
+          const { error: updateErr } = await supabase
+            .from('orders')
+            .update(updatePayload)
+            .eq('external_id', order.external_id);
+          if (!updateErr) {
+            updatedCount++;
+            console.log(`[SmartBiz Scraper] 🔄 Updated: ${order.external_id} ${existing.status} → ${order.status}`);
+          }
         }
       }
     }

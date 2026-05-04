@@ -1,6 +1,7 @@
 -- ================================================================
--- LogicalMind Ops — Supabase Schema
--- Run this in your Supabase SQL editor (new project, not the PDF store)
+-- LogicalMind Ops — Supabase Schema (Consolidated)
+-- Run this ONCE in your Supabase SQL editor. It is idempotent
+-- (uses IF NOT EXISTS) so it's safe to re-run.
 -- ================================================================
 
 -- Enable UUID extension
@@ -42,26 +43,38 @@ create table if not exists agent_runs (
 );
 
 -- ─────────────────────────────────────────────────────────────────
--- Phase 2 tables (add when ready):
+-- Phase 2: Orders & Products
 -- ─────────────────────────────────────────────────────────────────
 
 create table if not exists orders (
-  id            uuid primary key default gen_random_uuid(),
-  channel       text default 'smartbiz',
-  external_id   text unique,
-  customer_name text,
-  product_name  text,
-  sku           text,
-  quantity      int default 1,
-  amount        numeric(10,2),
-  status        text default 'pending',
-  awb           text,
-  order_date    timestamptz,
-  scraped_at    timestamptz default now(),
-  shipped_at    timestamptz,
-  delivered_at  timestamptz,
-  created_at    timestamptz default now()
+  id              uuid primary key default gen_random_uuid(),
+  channel         text default 'smartbiz',
+  external_id     text unique,
+  customer_name   text,
+  product_name    text,
+  sku             text,
+  quantity        int default 1,
+  amount          numeric(10,2),
+  status          text default 'pending',
+  awb             text,
+  order_date      timestamptz,
+  scraped_at      timestamptz default now(),
+  shipped_at      timestamptz,
+  delivered_at    timestamptz,
+  -- Customer address fields (populated by scraper from order detail page)
+  customer_phone  text,
+  customer_email  text,
+  address_line1   text,
+  address_line2   text,
+  city            text,
+  state           text,
+  pincode         text,
+  created_at      timestamptz default now()
 );
+
+create index if not exists orders_external_id_idx on orders(external_id);
+create index if not exists orders_awb_idx         on orders(awb);
+create index if not exists orders_status_idx      on orders(status);
 
 create table if not exists products (
   id            uuid primary key default gen_random_uuid(),
@@ -75,21 +88,45 @@ create table if not exists products (
 );
 
 -- ─────────────────────────────────────────────────────────────────
--- Phase 3 tables:
+-- Phase 3: WhatsApp Broadcasts
 -- ─────────────────────────────────────────────────────────────────
 
--- create table if not exists whatsapp_broadcasts (
---   id           uuid primary key default gen_random_uuid(),
---   message      text not null,
---   group_filter text default 'all',
---   status       text default 'queued' check (status in ('queued','approved','sending','sent','failed')),
---   approved_by  text,
---   queued_at    timestamptz default now(),
---   sent_at      timestamptz
--- );
+create table if not exists broadcasts (
+  id           uuid primary key default gen_random_uuid(),
+  message      text not null,
+  drafted_by   text default 'agent',
+  status       text default 'draft' check (status in ('draft','approved','sending','sent','failed')),
+  group_filter text default 'all',   -- 'all', 'tet', 'dsc', 'general', 'channel_rings'
+  groups_total int  default 0,
+  groups_sent  int  default 0,
+  media_url    text,                  -- Optional: public URL to image or PDF
+  media_type   text check (media_type in ('image', 'pdf')),
+  approved_at  timestamptz,
+  sent_at      timestamptz,
+  created_at   timestamptz default now()
+);
 
 -- ─────────────────────────────────────────────────────────────────
--- Phase 4 tables:
+-- Migrations (safe to re-run — uses IF NOT EXISTS / IF EXISTS)
+-- ─────────────────────────────────────────────────────────────────
+
+-- Add media columns to broadcasts (for existing installs)
+alter table broadcasts add column if not exists media_url  text;
+alter table broadcasts add column if not exists media_type text check (media_type in ('image', 'pdf'));
+
+-- Add customer address columns to orders (for existing installs)
+alter table orders add column if not exists customer_phone  text;
+alter table orders add column if not exists customer_email  text;
+alter table orders add column if not exists address_line1   text;
+alter table orders add column if not exists address_line2   text;
+alter table orders add column if not exists city            text;
+alter table orders add column if not exists state           text;
+alter table orders add column if not exists pincode         text;
+alter table orders add column if not exists scraped_at      timestamptz default now();
+alter table orders add column if not exists order_date      timestamptz;
+
+-- ─────────────────────────────────────────────────────────────────
+-- Phase 4 tables (uncomment when ready):
 -- ─────────────────────────────────────────────────────────────────
 
 -- create table if not exists payments (

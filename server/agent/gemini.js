@@ -101,7 +101,18 @@ async function runAgent(userMessage, history = [], runId = null) {
   ];
 
   // Agentic loop — keep calling tools until model stops
+  const MAX_ITERATIONS = 20;
+  let iterations = 0;
+
   while (true) {
+    iterations++;
+    if (iterations > MAX_ITERATIONS) {
+      console.warn(`[Agent] Hit max iterations (${MAX_ITERATIONS}). Returning partial response.`);
+      const reply = 'I encountered a loop while processing your request. Please try a simpler question or break it into steps.';
+      await saveMessage('assistant', reply, runId);
+      return { reply, history: messages.slice(1), toolsUsed, warning: 'max_iterations_reached' };
+    }
+
     const response = await client.chat.completions.create({
       model:       'llama-3.3-70b-versatile',
       messages,

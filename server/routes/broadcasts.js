@@ -67,8 +67,9 @@ router.post('/:id/progress', async (req, res) => {
   }
   const { data, error } = await supabase
     .from('broadcasts').update(update)
-    .eq('id', req.params.id).select().single();
+    .eq('id', req.params.id).select().maybeSingle();
   if (error) return res.status(500).json({ error: error.message });
+  if (!data) return res.status(404).json({ error: 'Broadcast not found' });
   res.json(data);
 });
 

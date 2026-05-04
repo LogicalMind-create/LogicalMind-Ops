@@ -35,7 +35,18 @@ async function execute({ order_id }) {
     return { error: `Order is already in '${order.status}' status. Cannot ship.` };
   }
 
-  // 2. Fetch product details to get dimensions
+  // 2. Validate customer address data before proceeding
+  const required = ['customer_name', 'address_line1', 'city', 'pincode', 'customer_phone'];
+  const missing = required.filter(f => !order[f]);
+  if (missing.length > 0) {
+    return {
+      error: 'MISSING_CUSTOMER_DATA',
+      fields: missing,
+      message: `Cannot ship order ${order.external_id}: missing ${missing.join(', ')}. The scraper may not have extracted the customer address yet. Please check the order detail in SmartBiz and update the order record manually.`,
+    };
+  }
+
+  // 3. Fetch product details to get dimensions
   const { data: product, error: prodErr } = await supabase
     .from('products')
     .select('*')
@@ -52,10 +63,7 @@ async function execute({ order_id }) {
     throw new Error(`Product SKU '${order.sku}' is missing shipping data: ${missingDimensions.join(', ')}.`);
   }
 
-  // 3. Prepare Shiprocket Payload
-  // Note: For a complete integration, you'd need full customer address details which the scraper should collect.
-  // Assuming the scraper puts address in a JSON column or we mock it for now.
-  // In a real scenario, these fields MUST come from the order data.
+  // 4. Prepare Shiprocket Payload — using real customer data from the orders table
   const payload = {
     order_id: order.external_id,
     order_date: new Date(order.order_date || order.created_at).toISOString().split('T')[0],
@@ -64,14 +72,14 @@ async function execute({ order_id }) {
     comment: "Created by LogicalMind Ops",
     billing_customer_name: order.customer_name,
     billing_last_name: "",
-    billing_address: "Address Pending Scraper", // Placeholder: Ensure scraper gets address
-    billing_address_2: "",
-    billing_city: "Hyderabad",
-    billing_pincode: "500001",
-    billing_state: "Telangana",
+    billing_address: order.address_line1 || '',
+    billing_address_2: order.address_line2 || '',
+    billing_city: order.city || '',
+    billing_pincode: order.pincode || '',
+    billing_state: order.state || 'Telangana',
     billing_country: "India",
-    billing_email: "test@example.com",
-    billing_phone: "9999999999",
+    billing_email: order.customer_email || '',
+    billing_phone: order.customer_phone || '',
     shipping_is_billing: true,
     order_items: [
       {
@@ -97,14 +105,14 @@ async function execute({ order_id }) {
   };
 
   try {
-    // 4. Create Order in Shiprocket
+    // 5. Create Order in Shiprocket
     const srOrder = await shiprocket.createOrder(payload);
     const shipmentId = srOrder?.shipment_id || srOrder?.data?.shipment_id || srOrder?.response?.data?.shipment_id;
     if (!shipmentId) {
       throw new Error('Shiprocket did not return a shipment ID.');
     }
     
-    // 5. Generate AWB
+    // 6. Generate AWB
     const srAwb = await shiprocket.generateAWB(shipmentId);
     const awbData = srAwb?.response?.data || srAwb?.data || srAwb;
     const awbCode = awbData?.awb_code;
@@ -112,7 +120,7 @@ async function execute({ order_id }) {
       throw new Error('Shiprocket did not return an AWB code.');
     }
     
-    // 6. Update Database
+    // 7. Update Database
     await supabase
       .from('orders')
       .update({
