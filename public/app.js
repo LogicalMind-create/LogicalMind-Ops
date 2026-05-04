@@ -7,7 +7,10 @@
 // ── Config ──────────────────────────────────────────────────────
 const API_BASE = '';   // same origin
 let SESSION_ID = localStorage.getItem('lm_session_id') || null;
-const SECRET   = window.__DASHBOARD_SECRET__ || localStorage.getItem('lm_secret') || '';
+const injectedSecret = window.__DASHBOARD_SECRET__;
+const SECRET = injectedSecret && injectedSecret !== '__DASHBOARD_SECRET_PLACEHOLDER__'
+  ? injectedSecret
+  : (localStorage.getItem('lm_secret') || '');
 
 function apiFetch(path, opts = {}) {
   const headers = { 'Content-Type': 'application/json' };

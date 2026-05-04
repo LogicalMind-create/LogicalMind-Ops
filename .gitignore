@@ -1,3 +1,6 @@
 node_modules/
 .env
 *.log
+whatsapp-helper/.env
+whatsapp-helper/downloads/
+whatsapp-helper/wa-session/

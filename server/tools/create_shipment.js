@@ -36,7 +36,7 @@ async function execute({ order_id }) {
   }
 
   // 2. Validate customer address data before proceeding
-  const required = ['customer_name', 'address_line1', 'city', 'pincode', 'customer_phone'];
+  const required = ['customer_name', 'address_line1', 'city', 'pincode', 'customer_phone', 'customer_email'];
   const missing = required.filter(f => !order[f]);
   if (missing.length > 0) {
     return {
