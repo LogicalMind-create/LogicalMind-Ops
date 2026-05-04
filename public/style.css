@@ -440,6 +440,7 @@ html, body {
   color: var(--muted);
   display: flex;
   gap: 10px;
+  flex-wrap: wrap;
   margin-top: 2px;
 }
 .task-person-badge {

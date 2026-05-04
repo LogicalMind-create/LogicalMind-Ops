@@ -22,6 +22,8 @@ const declaration = {
 function normaliseStatus(raw = '') {
   const s = raw.toLowerCase().replace(/[_-]/g, ' ');
   if (s.includes('ready to ship')) return 'ready_to_ship';
+  if (s.includes('ready for pickup') || s.includes('ready for dispatch')) return 'ready_to_ship';
+  if (s.includes('accepted') || s.includes('unshipped') || s.includes('processing')) return 'pending';
   if (s.includes('pending') || s.includes('new') || s.includes('unprocessed')) return 'pending';
   if (s.includes('shipped') || s.includes('in transit') || s.includes('pickup')) return 'shipped';
   if (s.includes('delivered')) return 'delivered';
@@ -50,6 +52,15 @@ function getAgentNote(status, daysOld) {
   return 'Normal';
 }
 
+function compactText(v) {
+  return String(v || '').trim();
+}
+
+function buildAddress(parts = []) {
+  const clean = parts.map(compactText).filter(Boolean);
+  return clean.length ? clean.join(', ') : 'N/A';
+}
+
 async function loadDatabaseOrders({ filterNorm, limit, now }) {
   let query = supabase
     .from('orders')
@@ -64,11 +75,28 @@ async function loadDatabaseOrders({ filterNorm, limit, now }) {
       : query.eq('status', filterNorm);
   }
 
-  const { data, error } = await query;
+  let { data, error } = await query;
+  if (error && /column .* does not exist/i.test(error.message || '')) {
+    // Backward compatibility for old schemas missing order_date.
+    query = supabase
+      .from('orders')
+      .select('*')
+      .order('created_at', { ascending: false })
+      .limit(limit);
+
+    if (filterNorm) {
+      query = filterNorm === 'pending'
+        ? query.in('status', ['pending', 'ready_to_ship'])
+        : query.eq('status', filterNorm);
+    }
+
+    ({ data, error } = await query);
+  }
   if (error) throw new Error(error.message);
 
   return (data || []).map((order) => {
     const orderDate = order.order_date || order.created_at || order.scraped_at;
+    const statusNorm = normaliseStatus(order.status);
     const daysOld = getDaysOld(orderDate, now);
 
     return {
@@ -77,12 +105,22 @@ async function loadDatabaseOrders({ filterNorm, limit, now }) {
       external_id: order.external_id,
       customer: order.customer_name || 'N/A',
       product: order.product_name || 'N/A',
-      status: normaliseStatus(order.status),
+      status: statusNorm,
       awb: order.awb || 'N/A',
       courier: order.courier || 'N/A',
+      address: buildAddress([
+        order.address_line1,
+        order.address_line2,
+        order.city,
+        order.state,
+        order.pincode,
+      ]),
+      city: order.city || 'N/A',
+      state: order.state || 'N/A',
+      pincode: order.pincode || 'N/A',
       created_at: orderDate || 'N/A',
       days_old: daysOld,
-      agent_note: getAgentNote(normaliseStatus(order.status), daysOld),
+      agent_note: getAgentNote(statusNorm, daysOld),
     };
   });
 }
@@ -97,6 +135,10 @@ async function loadShiprocketOrders({ filterNorm, limit, now, existingIds }) {
       const externalId = o.channel_order_id || o.order_id || o.id;
       const orderDate = o.created_at || o.order_date;
       const daysOld = getDaysOld(orderDate, now);
+      const addressLine = o.customer_address || o.shipping_address || o.billing_address || o.address || '';
+      const city = o.customer_city || o.shipping_city || o.billing_city || '';
+      const state = o.customer_state || o.shipping_state || o.billing_state || '';
+      const pincode = o.customer_pincode || o.shipping_pincode || o.billing_pincode || '';
 
       return {
         source: 'Shiprocket',
@@ -108,6 +150,10 @@ async function loadShiprocketOrders({ filterNorm, limit, now, existingIds }) {
         raw_status: o.status,
         awb: o.awb_code || 'N/A',
         courier: o.courier_name || 'N/A',
+        address: buildAddress([addressLine, city, state, pincode]),
+        city: city || 'N/A',
+        state: state || 'N/A',
+        pincode: pincode || 'N/A',
         created_at: orderDate || 'N/A',
         days_old: daysOld,
         agent_note: getAgentNote(status, daysOld),

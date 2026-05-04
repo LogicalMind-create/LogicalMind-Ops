@@ -101,6 +101,7 @@ create table if not exists broadcasts (
   groups_sent  int  default 0,
   media_url    text,                  -- Optional: public URL to image or PDF
   media_type   text check (media_type in ('image', 'pdf')),
+  error_reason text,                  -- Set when status=failed (helper / progress)
   approved_at  timestamptz,
   sent_at      timestamptz,
   created_at   timestamptz default now()
@@ -113,6 +114,7 @@ create table if not exists broadcasts (
 -- Add media columns to broadcasts (for existing installs)
 alter table broadcasts add column if not exists media_url  text;
 alter table broadcasts add column if not exists media_type text check (media_type in ('image', 'pdf'));
+alter table broadcasts add column if not exists error_reason text;
 
 -- Add customer address columns to orders (for existing installs)
 alter table orders add column if not exists customer_phone  text;

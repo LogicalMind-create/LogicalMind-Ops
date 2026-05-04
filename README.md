@@ -46,6 +46,8 @@ npm run dev
 - ✅ Local `whatsapp-helper` script safely loops through groups mimicking human behavior
 - ✅ Auto-forwards Telegram messages directly into the WhatsApp queue
 
+**Helper CLI** (from `whatsapp-helper/`): `npm run dry-run` or `node helper.js --dry-run` to exercise selectors without sending; `node helper.js --once` for a single server poll then exit. Existing DBs: re-run the `broadcasts` `ALTER TABLE` section in `supabase_schema.sql` (adds `error_reason` for failed-broadcast UI).
+
 ## Required environment variables
 
 | Variable | Where to get it |
@@ -73,7 +75,7 @@ Add these in your repo → Settings → Secrets → Actions:
 
 ## Supabase setup
 
-1. Run `supabase_schema.sql` and `supabase_broadcasts.sql` in your Supabase SQL editor.
+1. Run `supabase_schema.sql` in your Supabase SQL editor (consolidated schema including broadcasts).
 2. After running, manually add your book SKUs to the `products` table:
 
 ```sql

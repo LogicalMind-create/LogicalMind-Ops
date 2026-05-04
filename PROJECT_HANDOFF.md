@@ -76,16 +76,13 @@ Important note:
 
 ### Database
 
-Supabase schema files:
+Supabase schema file:
 
 - [supabase_schema.sql](C:/Users/kumar/OneDrive/Desktop/LogicalMind_Ops/supabase_schema.sql)
-- [supabase_broadcasts.sql](C:/Users/kumar/OneDrive/Desktop/LogicalMind_Ops/supabase_broadcasts.sql)
 
 Important:
 
-- `supabase_schema.sql` contains core tables like `tasks`, `chat_messages`, `agent_runs`, `orders`, `products`
-- `supabase_broadcasts.sql` contains the actual `broadcasts` table and related migration bits
-- Main schema and broadcast schema are still split across two files
+- `supabase_schema.sql` is the single consolidated schema (tasks, chat, orders, products, **broadcasts**, migrations). Run it once in Supabase SQL editor; it is idempotent.
 
 ### WhatsApp Automation
 
@@ -337,18 +334,9 @@ Check:
 - [server/routes/broadcasts.js](C:/Users/kumar/OneDrive/Desktop/LogicalMind_Ops/server/routes/broadcasts.js)
 - [public/app.js](C:/Users/kumar/OneDrive/Desktop/LogicalMind_Ops/public/app.js)
 
-### C. Main schema still split across two SQL files
+### C. Schema setup
 
-Still a setup/documentation gap:
-
-- [supabase_schema.sql](C:/Users/kumar/OneDrive/Desktop/LogicalMind_Ops/supabase_schema.sql)
-- [supabase_broadcasts.sql](C:/Users/kumar/OneDrive/Desktop/LogicalMind_Ops/supabase_broadcasts.sql)
-
-This can cause:
-
-- incomplete fresh setup
-- missing `broadcasts` table
-- missing `media_url`, `media_type`, `groups_sent`, `groups_total`
+Use only [supabase_schema.sql](C:/Users/kumar/OneDrive/Desktop/LogicalMind_Ops/supabase_schema.sql). If an old DB is missing columns, re-run the `ALTER TABLE` sections from that file (idempotent).
 
 ### D. `.env.example` still needs cleanup
 
@@ -384,7 +372,7 @@ If another AI is asked to continue bug-fixing, this is the best order:
 4. Verify helper can send to exactly one safe test group
 5. Verify media upload path separately from text-only path
 6. Verify `channel_rings` special route
-7. Clean schema split between `supabase_schema.sql` and `supabase_broadcasts.sql`
+7. Confirm `supabase_schema.sql` has been applied (includes `broadcasts` + `error_reason`)
 8. Clean `.env.example` and `.gitignore`
 
 ---

@@ -5,11 +5,11 @@
   "main": "helper.js",
   "scripts": {
     "start": "node helper.js",
-    "discover": "node discover-groups.js"
+    "discover": "node discover-groups.js",
+    "dry-run": "node helper.js --dry-run"
   },
   "dependencies": {
     "dotenv": "^16.0.0",
-    "node-fetch": "^3.3.2",
     "playwright": "^1.44.0"
   }
 }

@@ -1,7 +1,0 @@
--- ================================================================
--- DEPRECATED — This file has been consolidated into supabase_schema.sql
--- All broadcast table definitions and migrations are now in the
--- main schema file. This file is kept only for reference.
---
--- To set up the database, run supabase_schema.sql (it's idempotent).
--- ================================================================

@@ -383,14 +383,60 @@ function updateTaskBadge(count) {
 // ── ORDERS ────────────────────────────────────────────────────
 // ═══════════════════════════════════════════════════════════════
 let orderFilter = 'pending';
+const orderDateFilter = {
+  from: '',
+  to: '',
+  undeliveredOnly: false,
+};
+
+function setDefaultOrderDateRange() {
+  const to = new Date();
+  const from = new Date();
+  from.setDate(from.getDate() - 30);
+
+  orderDateFilter.from = from.toISOString().slice(0, 10);
+  orderDateFilter.to = to.toISOString().slice(0, 10);
+}
+
+function syncOrderFilterControls() {
+  const fromEl = document.getElementById('orders-from-date');
+  const toEl = document.getElementById('orders-to-date');
+  const undeliveredEl = document.getElementById('orders-undelivered-only');
+  if (fromEl) fromEl.value = orderDateFilter.from || '';
+  if (toEl) toEl.value = orderDateFilter.to || '';
+  if (undeliveredEl) undeliveredEl.checked = !!orderDateFilter.undeliveredOnly;
+}
+
+function applyOrderFilters() {
+  const fromEl = document.getElementById('orders-from-date');
+  const toEl = document.getElementById('orders-to-date');
+  const undeliveredEl = document.getElementById('orders-undelivered-only');
+
+  orderDateFilter.from = fromEl?.value || '';
+  orderDateFilter.to = toEl?.value || '';
+  orderDateFilter.undeliveredOnly = !!undeliveredEl?.checked;
+  loadOrders();
+}
+
+function resetOrderFilters() {
+  setDefaultOrderDateRange();
+  orderDateFilter.undeliveredOnly = false;
+  syncOrderFilterControls();
+  loadOrders();
+}
 
 async function loadOrders() {
   const list = document.getElementById('order-list');
   if (!list) return;
   list.innerHTML = '<div class="empty-state"><div class="emoji">⏳</div><p>Loading orders…</p></div>';
+  syncOrderFilterControls();
 
   try {
-    const params = new URLSearchParams({ status: orderFilter, limit: 100 });
+    const params = new URLSearchParams({ status: orderFilter, limit: 200, include_shiprocket: 'true' });
+    if (orderDateFilter.from) params.set('start_date', orderDateFilter.from);
+    if (orderDateFilter.to) params.set('end_date', orderDateFilter.to);
+    if (orderDateFilter.undeliveredOnly) params.set('undelivered_only', 'true');
+
     const res    = await apiFetch(`/api/orders?${params}`);
     if (!res.ok) throw new Error('Failed');
     const orders = await res.json();
@@ -408,7 +454,7 @@ function renderOrders(orders) {
     list.innerHTML = `
       <div class="empty-state">
         <div class="emoji">📭</div>
-        <p>${orderFilter === 'pending' ? 'No pending orders. Check back after the next scrape.' : 'No orders found.'}</p>
+        <p>No matching orders in this date range/filter. Try widening the date range.</p>
       </div>`;
     return;
   }
@@ -423,9 +469,17 @@ function renderOrders(orders) {
       cancelled: '#ef4444',
     }[o.status] || '#6b7280';
 
-    const agentMsg = encodeURIComponent(
-      `List order details and status for order ID ${o.id}` 
-    );
+    const destination = [o.address_line1, o.address_line2, o.city, o.state, o.pincode]
+      .map(v => String(v || '').trim())
+      .filter(Boolean)
+      .join(', ') || 'Address not available';
+    const shippingStage =
+      o.status === 'delivered' ? 'Delivered' :
+      o.status === 'shipped' ? 'In transit (not delivered yet)' :
+      o.status === 'ready_to_ship' ? 'Ready to ship' :
+      o.status === 'pending' ? 'Not shipped yet' :
+      o.status;
+    const ageText = Number.isFinite(o.age_days) ? `${o.age_days}d ago` : 'recently';
 
     return `
       <div class="task-item" style="${isDelayed ? 'border-left:3px solid #f59e0b;' : ''}">
@@ -440,10 +494,12 @@ function renderOrders(orders) {
           <div class="task-meta">
             <span class="task-person-badge">${escHtml(o.external_id || o.id.slice(0, 8))}</span>
             <span>Customer: ${escHtml(o.customer_name || '—')}</span>
+            <span>Destination: ${escHtml(destination)}</span>
             <span>SKU: ${escHtml(o.sku || '—')}</span>
             <span>Qty: ${o.quantity}</span>
             ${o.awb && o.awb !== 'N/A' ? `<span>AWB: <strong>${escHtml(o.awb)}</strong></span>` : ''}
-            <span style="color:var(--muted)">Scraped ${o.age_days}d ago</span>
+            <span>Shipping: ${escHtml(shippingStage)}</span>
+            <span style="color:var(--muted)">Updated ${escHtml(ageText)}</span>
           </div>
         </div>
         <div style="display:flex;flex-direction:column;gap:6px;align-items:flex-end">
@@ -543,6 +599,11 @@ function renderBroadcasts(broadcasts) {
           ${b.media_type === 'pdf' ? '📄 PDF' : '🖼 Image'}
         </span>`
       : '';
+    const errBlock = (b.status === 'failed' && b.error_reason)
+      ? `<div style="margin-top:8px;padding:8px 10px;border-radius:8px;background:#fef2f2;color:#b91c1c;font-size:12px;white-space:pre-wrap;border:1px solid #fecaca">
+          <strong>Error:</strong> ${escHtml(b.error_reason)}
+        </div>`
+      : '';
     return `
       <div class="task-item">
         <div class="task-body" style="flex:1">
@@ -554,6 +615,7 @@ function renderBroadcasts(broadcasts) {
             <span>${dateStr}</span>
           </div>
           ${progress}
+          ${errBlock}
         </div>
         <div style="display:flex;flex-direction:column;gap:6px;align-items:flex-end;flex-shrink:0">
           ${b.status === 'draft' ? `
@@ -561,6 +623,9 @@ function renderBroadcasts(broadcasts) {
               onclick="approveBroadcast('${b.id}')">Approve &amp; Send ✅</button>
             <button class="btn btn-ghost" style="font-size:11px;padding:5px 10px;color:var(--danger)"
               onclick="deleteBroadcast('${b.id}')">Delete</button>` : ''}
+          ${b.status === 'failed' ? `
+            <button class="btn btn-primary" style="font-size:11px;padding:5px 12px"
+              onclick="retryBroadcast('${b.id}')">Retry ↻</button>` : ''}
         </div>
       </div>`;
   }).join('');
@@ -632,12 +697,27 @@ async function deleteBroadcast(id) {
   else toast('Could not delete', 'error');
 }
 
+async function retryBroadcast(id) {
+  if (!confirm('Re-queue this broadcast for the WhatsApp helper? It will be set to approved again.')) return;
+  const res = await apiFetch(`/api/broadcasts/${id}/retry`, { method: 'POST' });
+  if (res.ok) {
+    toast('↻ Re-queued — helper will pick it up shortly.', 'success');
+    loadBroadcasts();
+  } else {
+    const err = await res.json().catch(() => ({}));
+    toast(err.error || 'Retry failed', 'error');
+  }
+}
+
 // ── Secret setup ─────────────────────────────────────────────────
 // ── Init ─────────────────────────────────────────────────────────
 document.addEventListener('DOMContentLoaded', () => {
   // Set today's date as default for new task form
   const dueInput = document.getElementById('new-due');
   if (dueInput) dueInput.value = new Date().toISOString().slice(0, 10);
+  setDefaultOrderDateRange();
+  orderDateFilter.undeliveredOnly = true;
+  syncOrderFilterControls();
 
   navigate('home');
   updateTaskBadge();

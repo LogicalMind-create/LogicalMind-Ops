@@ -6,6 +6,10 @@
  * to all your WhatsApp groups via WhatsApp Web.
  *
  * Supports: Text, Images (jpg/png), PDFs
+ *
+ * CLI: node helper.js [--once] [--dry-run]
+ *   --once     Run a single poll tick then exit (unless a broadcast was processed)
+ *   --dry-run  Resolve selectors and "would send" per group; no message send / Enter
  */
 
 'use strict';
@@ -15,7 +19,6 @@ const path = require('path');
 const fs = require('fs');
 const https = require('https');
 const http = require('http');
-const fetch = (...args) => import('node-fetch').then(({ default: f }) => f(...args));
 
 const SERVER_URL = process.env.SERVER_URL || 'http://localhost:3000';
 const DASHBOARD_SECRET = process.env.DASHBOARD_SECRET || '';
@@ -23,75 +26,25 @@ const POLL_MS = Number(process.env.POLL_INTERVAL_MS) || 30_000;
 const SESSION_DIR = path.join(__dirname, 'wa-session');
 const GROUPS_FILE = path.join(__dirname, 'groups.json');
 const DOWNLOADS_DIR = path.join(__dirname, 'downloads');
+const DEBUG_DIR = path.join(__dirname, 'debug');
 const WHATSAPP_GROUP_CHANNEL_RINGS_NAME = process.env.WHATSAPP_GROUP_CHANNEL_RINGS_NAME || '';
 
-const SEARCH_BOX_SELECTORS = [
-  'div[contenteditable="true"][data-tab="3"]',
-  'div[contenteditable="true"][aria-label*="Search"]',
-  'div[contenteditable="true"][title*="Search"]',
-  'input[type="text"][title="Search input textbox"]',
-].join(', ');
-
-const CHAT_BOX_SELECTORS = [
-  'div[contenteditable="true"][data-tab="10"]',
-  'div[contenteditable="true"][title="Type a message"]',
-  'div[contenteditable="true"][aria-label*="message"]',
-].join(', ');
+const ARGS = new Set(process.argv.slice(2));
+const FLAG_ONCE = ARGS.has('--once');
+const FLAG_DRY_RUN = ARGS.has('--dry-run');
 
 const rand = (min, max) => Math.floor(Math.random() * (max - min + 1)) + min;
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
-async function humanType(page, selector, text) {
-  const el = await page.waitForSelector(selector, { timeout: 15000 });
-  await el.click();
-  await sleep(rand(300, 700));
-  await page.mouse.move(rand(200, 800), rand(200, 500));
-  await sleep(rand(100, 300));
+/** Persistent browser across broadcasts */
+let browserContext = null;
 
-  for (const char of text) {
-    await el.type(char, { delay: rand(40, 130) });
-    if (Math.random() < 0.04) await sleep(rand(400, 1200));
-  }
-
-  await sleep(rand(800, 2500));
+function headers() {
+  return {
+    'Content-Type': 'application/json',
+    ...(DASHBOARD_SECRET ? { 'X-Dashboard-Secret': DASHBOARD_SECRET } : {}),
+  };
 }
-
-async function clearEditable(page, selector) {
-  const el = page.locator(selector).first();
-  await el.waitFor({ timeout: 15000 });
-  await el.click();
-  await sleep(rand(100, 250));
-  await page.keyboard.press('Control+A');
-  await sleep(rand(50, 120));
-  await page.keyboard.press('Backspace');
-  await sleep(rand(100, 250));
-}
-
-async function humanClick(page, element) {
-  const box = await element.boundingBox();
-  if (box) {
-    await page.mouse.move(
-      box.x + box.width / 2 + rand(-8, 8),
-      box.y + box.height / 2 + rand(-4, 4),
-      { steps: rand(5, 15) }
-    );
-    await sleep(rand(100, 400));
-  }
-  await element.click();
-}
-
-function shuffle(arr) {
-  for (let i = arr.length - 1; i > 0; i--) {
-    const j = Math.floor(Math.random() * (i + 1));
-    [arr[i], arr[j]] = [arr[j], arr[i]];
-  }
-  return arr;
-}
-
-const headers = () => ({
-  'Content-Type': 'application/json',
-  ...(DASHBOARD_SECRET ? { 'X-Dashboard-Secret': DASHBOARD_SECRET } : {}),
-});
 
 async function getPendingBroadcast() {
   const res = await fetch(`${SERVER_URL}/api/broadcasts?status=approved&limit=1`, { headers: headers() });
@@ -100,17 +53,19 @@ async function getPendingBroadcast() {
   return data[0] || null;
 }
 
-async function reportProgress(id, sent, total, status) {
+async function reportProgress(id, sent, total, status, errorReason) {
+  const body = { groups_sent: sent, groups_total: total, status };
+  if (errorReason !== undefined && errorReason !== null) body.error_reason = errorReason;
   await fetch(`${SERVER_URL}/api/broadcasts/${id}/progress`, {
     method: 'POST',
     headers: headers(),
-    body: JSON.stringify({ groups_sent: sent, groups_total: total, status }),
+    body: JSON.stringify(body),
   }).catch(() => {});
 }
 
 async function markBroadcastFailed(id, reason) {
   console.error(`[Helper] Marking broadcast ${id} as failed: ${reason}`);
-  await reportProgress(id, 0, 0, 'failed');
+  await reportProgress(id, 0, 0, 'failed', String(reason || 'Unknown error'));
 }
 
 function downloadFile(url, dest) {
@@ -151,50 +106,232 @@ function loadGroups() {
   return JSON.parse(fs.readFileSync(GROUPS_FILE, 'utf-8'));
 }
 
-async function resolveAttachmentInput(page, mediaType) {
-  const selectors = mediaType === 'image'
-    ? ['input[accept*="image"]', 'input[accept*="video"]', 'input[type="file"]']
-    : ['input[type="file"]', 'input[accept="*"]'];
-
-  for (const selector of selectors) {
-    const locator = page.locator(selector).first();
-    if (await locator.count()) return locator;
+function shuffle(arr) {
+  for (let i = arr.length - 1; i > 0; i--) {
+    const j = Math.floor(Math.random() * (i + 1));
+    [arr[i], arr[j]] = [arr[j], arr[i]];
   }
+  return arr;
+}
 
+async function debugDump(page, label) {
+  try {
+    fs.mkdirSync(DEBUG_DIR, { recursive: true });
+    const ts = Date.now();
+    const base = path.join(DEBUG_DIR, `${label}-${ts}`);
+    await page.screenshot({ path: `${base}.png`, fullPage: true }).catch(() => {});
+    const html = await page.content().catch(() => '');
+    fs.writeFileSync(`${base}.html`, html, 'utf8');
+    console.error(`[Helper] Debug dump: ${base}.png / ${base}.html`);
+  } catch (e) {
+    console.error('[Helper] debugDump failed:', e.message);
+  }
+}
+
+async function humanClick(page, element) {
+  const box = await element.boundingBox();
+  if (box) {
+    await page.mouse.move(
+      box.x + box.width / 2 + rand(-8, 8),
+      box.y + box.height / 2 + rand(-4, 4),
+      { steps: rand(5, 15) }
+    );
+    await sleep(rand(100, 400));
+  }
+  await element.click();
+}
+
+/**
+ * Lexical / WA Web: focus editor then use keyboard (not ElementHandle.type).
+ */
+async function humanTypeIntoLocator(page, locator, text) {
+  const el = locator.first();
+  await el.waitFor({ state: 'visible', timeout: 15000 });
+  await el.click();
+  await sleep(rand(200, 500));
+  await page.mouse.move(rand(200, 800), rand(200, 500));
+  await sleep(rand(100, 250));
+  await page.keyboard.press('Control+A');
+  await sleep(rand(50, 120));
+  await page.keyboard.press('Backspace');
+  await sleep(rand(100, 200));
+  await page.keyboard.type(text, { delay: rand(40, 130) });
+  await sleep(rand(800, 2500));
+}
+
+async function focusSearchWithShortcut(page) {
+  // WhatsApp Web frequently changes search DOM structure; Ctrl+K is stable.
+  await page.keyboard.press('Control+K').catch(() => {});
+  await sleep(rand(200, 450));
+  const focused = page.locator(':focus').first();
+  if ((await focused.count()) > 0 && (await focused.isVisible().catch(() => false))) {
+    return focused;
+  }
   return null;
 }
 
+async function resolveSearchBox(page) {
+  const candidates = [
+    page.locator('#side div[role="textbox"][contenteditable="true"]'),
+    page.locator('#side div[contenteditable="true"]'),
+    page.locator('div[contenteditable="true"][data-tab="3"]'),
+    page.locator('div[contenteditable="true"][aria-label*="Search" i]'),
+    page.locator('div[contenteditable="true"][title*="Search" i]'),
+    page.locator('input[type="text"][title*="Search" i]'),
+  ];
+  for (const loc of candidates) {
+    const first = loc.first();
+    if ((await first.count()) > 0 && (await first.isVisible().catch(() => false))) return first;
+  }
+
+  const focusedFromShortcut = await focusSearchWithShortcut(page);
+  if (focusedFromShortcut) return focusedFromShortcut;
+
+  const broadFallbacks = [
+    page.locator('#side div[contenteditable="true"]'),
+    page.locator('div[role="textbox"][contenteditable="true"]'),
+    page.locator('div[contenteditable="true"]'),
+  ];
+  for (const loc of broadFallbacks) {
+    const first = loc.first();
+    if ((await first.count()) > 0 && (await first.isVisible().catch(() => false))) return first;
+  }
+
+  await debugDump(page, 'search-box-missing');
+  throw new Error('Search box not found');
+}
+
+async function resolveComposeBox(page) {
+  const candidates = [
+    page.locator('footer div[role="textbox"][contenteditable="true"]'),
+    page.locator('#main footer div[contenteditable="true"]'),
+    page.locator('footer div[contenteditable="true"]'),
+    page.locator('#main div[role="textbox"][contenteditable="true"]'),
+    page.locator('div[contenteditable="true"][data-tab="10"]'),
+    page.locator('div[contenteditable="true"][title*="Type a message" i]'),
+    page.locator('div[contenteditable="true"][aria-label*="message" i]'),
+    page.locator('#main div[contenteditable="true"][data-lexical-editor="true"]'),
+  ];
+  for (const loc of candidates) {
+    const first = loc.first();
+    if ((await first.count()) > 0 && (await first.isVisible().catch(() => false))) return first;
+  }
+  await debugDump(page, 'compose-box-missing');
+  throw new Error('Compose box not found');
+}
+
 async function clearSearch(page) {
-  await clearEditable(page, SEARCH_BOX_SELECTORS).catch(() => {});
+  try {
+    const search = (await focusSearchWithShortcut(page)) || (await resolveSearchBox(page));
+    await search.click();
+    await sleep(rand(80, 180));
+    await page.keyboard.press('Control+A');
+    await sleep(rand(40, 100));
+    await page.keyboard.press('Backspace');
+    await sleep(rand(80, 200));
+  } catch (_) {
+    /* ignore */
+  }
+}
+
+function norm(s) {
+  return String(s || '')
+    .normalize('NFC')
+    .toLowerCase()
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
+function matchesGroupName(titleAttr, rowText, groupName) {
+  const n = norm(groupName);
+  const t = norm(titleAttr);
+  const r = norm((rowText || '').split('\n')[0] || '');
+  if (!n) return false;
+  if (t === n || r === n) return true;
+  if (t.includes(n) || n.includes(t)) return true;
+  if (r.includes(n) || n.includes(r)) return true;
+  return false;
 }
 
 async function openGroup(page, groupName) {
   await clearSearch(page);
-  await humanType(page, SEARCH_BOX_SELECTORS, groupName);
+  const search = await resolveSearchBox(page);
+  await humanTypeIntoLocator(page, search, groupName);
   await sleep(rand(1000, 2000));
 
-  const exactTitle = page.locator(`//span[@title="${groupName}"]`).first();
-  const fallback = page.locator('[data-testid="cell-frame-title"]').filter({ hasText: groupName }).first();
-  const target = await exactTitle.isVisible({ timeout: 4000 }).catch(() => false) ? exactTitle : fallback;
+  const rowSelectors = '#pane-side div[role="listitem"], #side div[role="listitem"], [data-testid="cell-frame-container"]';
+  const rows = page.locator(rowSelectors);
+  const count = await rows.count();
+  let target = null;
 
-  if (!await target.isVisible({ timeout: 3000 }).catch(() => false)) {
+  for (let i = 0; i < count; i++) {
+    const row = rows.nth(i);
+    if (!(await row.isVisible().catch(() => false))) continue;
+    let titleAttr = '';
+    const titleEl = row.locator('span[title]').first();
+    if ((await titleEl.count()) > 0) {
+      titleAttr = (await titleEl.getAttribute('title').catch(() => '')) || '';
+    }
+    const rowText = (await row.innerText().catch(() => '')) || '';
+    if (matchesGroupName(titleAttr, rowText, groupName)) {
+      target = titleEl && (await titleEl.count()) > 0 ? titleEl : row;
+      break;
+    }
+  }
+
+  if (!target) {
+    const exactLegacy = page.locator(`span[title="${groupName.replace(/"/g, '\\"')}"]`).first();
+    if ((await exactLegacy.count()) > 0 && (await exactLegacy.isVisible().catch(() => false))) {
+      target = exactLegacy;
+    }
+  }
+
+  if (!target) {
+    const fallback = page.locator('[data-testid="cell-frame-title"]').filter({ hasText: groupName }).first();
+    if ((await fallback.count()) > 0 && (await fallback.isVisible().catch(() => false))) {
+      target = fallback;
+    }
+  }
+
+  if (!target || (await target.count()) === 0) {
     console.warn(`  [Helper] Group not found: "${groupName}" - skipping`);
+    await debugDump(page, `group-not-found-${norm(groupName).slice(0, 30).replace(/\W+/g, '_')}`);
     await clearSearch(page);
     return false;
   }
 
-  await humanClick(page, target);
+  await humanClick(page, target.first());
   await sleep(rand(600, 1500));
   await page.mouse.wheel(0, rand(-80, -200));
   await sleep(rand(200, 600));
   return true;
 }
 
+async function resolveAttachmentInput(page, mediaType) {
+  const selectors =
+    mediaType === 'image'
+      ? ['input[accept*="image"]', 'input[accept*="video"]', 'input[type="file"]']
+      : ['input[type="file"]', 'input[accept="*"]'];
+
+  for (const selector of selectors) {
+    const locator = page.locator(selector).first();
+    if (await locator.count()) return locator;
+  }
+  return null;
+}
+
 async function sendTextToGroup(page, groupName, message) {
   const opened = await openGroup(page, groupName);
   if (!opened) return false;
 
-  await humanType(page, CHAT_BOX_SELECTORS, message);
+  if (FLAG_DRY_RUN) {
+    console.log(`  [Helper] [DRY-RUN] Would send text to: "${groupName}"`);
+    await clearSearch(page);
+    return true;
+  }
+
+  const compose = await resolveComposeBox(page);
+  await humanTypeIntoLocator(page, compose, message);
   await page.keyboard.press('Enter');
   await sleep(rand(400, 800));
   await clearSearch(page);
@@ -205,42 +342,59 @@ async function sendMediaToGroup(page, groupName, localFilePath, caption, mediaTy
   const opened = await openGroup(page, groupName);
   if (!opened) return false;
 
+  if (FLAG_DRY_RUN) {
+    console.log(`  [Helper] [DRY-RUN] Would send media to: "${groupName}"`);
+    await clearSearch(page);
+    return true;
+  }
+
   try {
-    const attachBtn = page.locator('[data-testid="attach-btn"], span[data-icon="attach-menu-plus"], [title="Attach"]').first();
-    if (!await attachBtn.isVisible({ timeout: 5000 }).catch(() => false)) {
+    const attachBtn = page
+      .locator(
+        'button[title="Attach"], button[title="attach"], [data-testid="attach-btn"], span[data-icon="attach-menu-plus"], span[data-icon="plus-rounded"], span[data-icon="plus"]'
+      )
+      .first();
+    if (!(await attachBtn.isVisible({ timeout: 5000 }).catch(() => false))) {
       console.warn(`  [Helper] Could not find attach button for "${groupName}" - falling back to text only`);
-      return await sendTextToGroup(page, groupName, `${caption}\n\n[Media attachment not sent - attach button not found]`);
+      return sendTextToGroup(page, groupName, `${caption}\n\n[Media attachment not sent - attach button not found]`);
     }
 
     await humanClick(page, attachBtn);
     await sleep(rand(600, 1200));
 
     const fileInput = await resolveAttachmentInput(page, mediaType);
-    if (!fileInput) {
-      throw new Error('Attachment input not found');
-    }
+    if (!fileInput) throw new Error('Attachment input not found');
 
     await fileInput.setInputFiles(localFilePath);
     await sleep(rand(2000, 3500));
 
-    await page.waitForSelector('[data-testid="media-editor"], .media-editor, [data-testid="send-media-dialog"]', {
-      timeout: 15000,
-    }).catch(() => {});
+    await page
+      .waitForSelector(
+        '[data-testid="media-editor"], .media-editor, [data-testid="send-media-dialog"], [role="dialog"]',
+        { timeout: 15000 }
+      )
+      .catch(() => {});
     await sleep(rand(1000, 2000));
 
     if (caption) {
-      const captionBox = page.locator(
-        '[data-testid="caption-input"], div[contenteditable="true"][data-tab="10"], div[contenteditable="true"][aria-label*="caption"]'
-      ).first();
-      if (await captionBox.isVisible({ timeout: 3000 }).catch(() => false)) {
-        await captionBox.click();
-        await sleep(rand(300, 600));
-        await captionBox.type(caption, { delay: rand(30, 80) });
-        await sleep(rand(500, 1000));
+      const captionCandidates = [
+        page.locator('div[role="textbox"][contenteditable="true"][aria-label*="caption" i]').first(),
+        page.locator('[data-testid="caption-input"]').first(),
+        page.locator('div[contenteditable="true"][aria-label*="caption" i]').first(),
+      ];
+      for (const captionBox of captionCandidates) {
+        if ((await captionBox.count()) > 0 && (await captionBox.isVisible({ timeout: 2000 }).catch(() => false))) {
+          await humanTypeIntoLocator(page, captionBox, caption);
+          break;
+        }
       }
     }
 
-    const sendBtn = page.locator('[data-testid="send"], button[aria-label="Send"]').first();
+    const sendBtn = page
+      .locator(
+        'span[data-icon="wds-ic-send-filled"], [data-testid="send"], button[aria-label="Send"], button[aria-label="send"], div[role="button"][aria-label="Send"]'
+      )
+      .first();
     if (await sendBtn.isVisible({ timeout: 5000 }).catch(() => false)) {
       await humanClick(page, sendBtn);
     } else {
@@ -254,7 +408,7 @@ async function sendMediaToGroup(page, groupName, localFilePath, caption, mediaTy
     console.error(`  [Helper] Media send failed for "${groupName}":`, err.message);
     console.log(`  [Helper] Falling back to text-only for "${groupName}"`);
     await clearSearch(page);
-    return await sendTextToGroup(page, groupName, `${caption}\n\n[Note: Media could not be attached]`);
+    return sendTextToGroup(page, groupName, `${caption}\n\n[Note: Media could not be attached]`);
   }
 }
 
@@ -270,7 +424,7 @@ async function sendToGroup(page, groupName, broadcast) {
         console.log(`  [Helper] Media saved to: ${localPath}`);
       } catch (err) {
         console.error('  [Helper] Failed to download media:', err.message);
-        return await sendTextToGroup(page, groupName, broadcast.message);
+        return sendTextToGroup(page, groupName, broadcast.message);
       }
     }
 
@@ -278,6 +432,69 @@ async function sendToGroup(page, groupName, broadcast) {
   }
 
   return sendTextToGroup(page, groupName, broadcast.message);
+}
+
+async function ensureBrowserContext() {
+  if (browserContext) return browserContext;
+  fs.mkdirSync(SESSION_DIR, { recursive: true });
+  browserContext = await chromium.launchPersistentContext(SESSION_DIR, {
+    headless: false,
+    args: ['--no-sandbox', '--disable-blink-features=AutomationControlled'],
+    userAgent:
+      'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36',
+  });
+
+  const closeCtx = async () => {
+    if (browserContext) {
+      await browserContext.close().catch(() => {});
+      browserContext = null;
+    }
+  };
+  process.once('SIGINT', async () => {
+    await closeCtx();
+    process.exit(0);
+  });
+  process.once('SIGTERM', async () => {
+    await closeCtx();
+    process.exit(0);
+  });
+
+  return browserContext;
+}
+
+async function getWhatsAppPage() {
+  const ctx = await ensureBrowserContext();
+  let page = ctx.pages()[0];
+  if (!page || page.isClosed()) page = await ctx.newPage();
+
+  const url = page.url() || '';
+  if (!url.includes('web.whatsapp.com')) {
+    await page.goto('https://web.whatsapp.com', { waitUntil: 'domcontentloaded', timeout: 60000 });
+  }
+
+  console.log('[Helper] Waiting for WhatsApp Web to load (scan QR if prompted)...');
+  await page.waitForSelector('#side, #pane-side, [data-testid="chat-list"]', { timeout: 90000 });
+  console.log('[Helper] WhatsApp Web loaded\n');
+  await sleep(rand(1500, 3000));
+  return page;
+}
+
+/**
+ * --dry-run without server: walk groups.json and verify search/list resolution only.
+ */
+async function dryRunLocalOnly() {
+  console.log('[Helper] --dry-run (local): verifying selectors against groups.json\n');
+  const groups = loadGroups();
+  const page = await getWhatsAppPage();
+  for (let i = 0; i < Math.min(groups.length, 3); i++) {
+    const g = groups[i];
+    console.log(`[Helper] [DRY-RUN] Resolving row for (${i + 1}/3 sample): ${g}`);
+    const ok = await openGroup(page, g);
+    console.log(`  -> openGroup: ${ok ? 'OK' : 'SKIP'}`);
+    await clearSearch(page);
+    await sleep(500);
+  }
+  console.log('\n[Helper] Dry-run sample done. (Only first 3 groups tested to limit UI churn.)');
 }
 
 async function runBroadcast(broadcast) {
@@ -308,8 +525,8 @@ async function runBroadcast(broadcast) {
     return;
   }
 
-  console.log(`\n[Helper] Starting broadcast to ${total} groups`);
-  console.log(`[Helper] Message: "${broadcast.message.slice(0, 60)}..."`);
+  console.log(`\n[Helper] Starting broadcast to ${total} groups${FLAG_DRY_RUN ? ' [DRY-RUN]' : ''}`);
+  console.log(`[Helper] Message: "${String(broadcast.message).slice(0, 60)}..."`);
   if (broadcast.media_url) {
     console.log(`[Helper] Media: ${broadcast.media_type} -> ${broadcast.media_url}`);
   }
@@ -317,21 +534,9 @@ async function runBroadcast(broadcast) {
 
   await reportProgress(broadcast.id, 0, total, 'sending');
   fs.mkdirSync(DOWNLOADS_DIR, { recursive: true });
-  fs.mkdirSync(SESSION_DIR, { recursive: true });
-
-  const browser = await chromium.launchPersistentContext(SESSION_DIR, {
-    headless: false,
-    args: ['--no-sandbox', '--disable-blink-features=AutomationControlled'],
-    userAgent: 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36',
-  });
 
   try {
-    const page = browser.pages()[0] || await browser.newPage();
-    await page.goto('https://web.whatsapp.com', { waitUntil: 'domcontentloaded', timeout: 60000 });
-    console.log('[Helper] Waiting for WhatsApp Web to load (scan QR if prompted)...');
-    await page.waitForSelector('[data-testid="chat-list"], #pane-side', { timeout: 90000 });
-    console.log('[Helper] WhatsApp Web loaded\n');
-    await sleep(rand(2000, 4000));
+    const page = await getWhatsAppPage();
 
     let sent = 0;
     let breakThreshold = rand(8, 12);
@@ -352,7 +557,7 @@ async function runBroadcast(broadcast) {
         console.log(`\n[Helper] Taking a human break for ${breakSec}s after ${i + 1} groups...\n`);
         await sleep(breakSec * 1000);
         breakThreshold = rand(8, 12);
-      } else {
+      } else if (i < groups.length - 1) {
         const delaySec = rand(5, 15);
         console.log(`[Helper]   Waiting ${delaySec}s before next group...`);
         await sleep(delaySec * 1000);
@@ -360,33 +565,63 @@ async function runBroadcast(broadcast) {
     }
 
     const finalStatus = sent === total ? 'sent' : sent > 0 ? 'sent' : 'failed';
-    await reportProgress(broadcast.id, sent, total, finalStatus);
+    await reportProgress(
+      broadcast.id,
+      sent,
+      total,
+      finalStatus,
+      finalStatus === 'failed' ? 'No messages were delivered to any group' : undefined
+    );
     console.log(`\n[Helper] Broadcast complete: ${sent}/${total} groups reached\n`);
-  } finally {
-    await browser.close();
 
-    if (broadcast.media_url) {
+    if (broadcast.media_url && !FLAG_DRY_RUN) {
       const ext = broadcast.media_type === 'pdf' ? 'pdf' : 'jpg';
       const localPath = path.join(DOWNLOADS_DIR, `media_${broadcast.id}.${ext}`);
       fs.unlink(localPath, () => {});
     }
+  } catch (err) {
+    console.error('[Helper] Fatal error during broadcast execution:', err.message);
+    try {
+      const ctx = browserContext || (await ensureBrowserContext());
+      const pages = ctx.pages();
+      const pg = pages[0];
+      if (pg) await debugDump(pg, 'fatal-broadcast');
+    } catch (_) {
+      /* ignore */
+    }
+    await markBroadcastFailed(broadcast.id, err.message);
   }
 }
 
 async function poll() {
   console.log(`[Helper] Polling ${SERVER_URL}/api/broadcasts every ${POLL_MS / 1000}s...`);
+  if (FLAG_ONCE) console.log('[Helper] --once: will exit after one idle poll (or after processing one broadcast)');
+  if (FLAG_DRY_RUN) console.log('[Helper] --dry-run: will not press Send / no real messages');
 
   let busy = false;
+  let processed = false;
+
   const tick = async () => {
     if (busy) return;
 
     try {
       const broadcast = await getPendingBroadcast();
-      if (!broadcast) return;
+      if (!broadcast) {
+        if (FLAG_ONCE && !processed) {
+          console.log('[Helper] --once: no approved broadcast; exiting.');
+          process.exit(0);
+        }
+        return;
+      }
 
       busy = true;
+      processed = true;
       console.log(`[Helper] Found approved broadcast: ${broadcast.id}`);
       await runBroadcast(broadcast);
+      if (FLAG_ONCE) {
+        console.log('[Helper] --once: done; exiting.');
+        process.exit(0);
+      }
     } catch (err) {
       console.error('[Helper] Error:', err.message);
     } finally {
@@ -395,7 +630,31 @@ async function poll() {
   };
 
   await tick();
-  setInterval(tick, POLL_MS);
+  if (!FLAG_ONCE) setInterval(tick, POLL_MS);
 }
 
-poll();
+async function main() {
+  if (FLAG_DRY_RUN) {
+    const broadcast = await getPendingBroadcast();
+    if (broadcast) {
+      console.log('[Helper] --dry-run: approved broadcast found; simulating send flow (no Enter / no media upload).');
+      await runBroadcast(broadcast);
+    } else {
+      if (FLAG_ONCE) {
+        console.log('[Helper] --once --dry-run: no approved broadcast on server; running local selector sample (3 groups).');
+      } else {
+        console.log('[Helper] --dry-run: no approved broadcast on server; running local selector sample (3 groups).');
+      }
+      await dryRunLocalOnly();
+    }
+    process.exit(0);
+    return;
+  }
+
+  await poll();
+}
+
+main().catch((e) => {
+  console.error(e);
+  process.exit(1);
+});

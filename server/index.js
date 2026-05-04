@@ -55,7 +55,11 @@ async function registerTelegramWebhook() {
   const appUrl = process.env.APP_URL;
   if (!token || !appUrl) return;
 
-  const webhookUrl = `${appUrl.replace(/\/$/, '')}/webhooks/telegram`;
+  const baseWebhookUrl = `${appUrl.replace(/\/$/, '')}/webhooks/telegram`;
+  const querySecret = process.env.TELEGRAM_WEBHOOK_SECRET || process.env.WEBHOOK_SECRET || '';
+  const webhookUrl = querySecret
+    ? `${baseWebhookUrl}?secret=${encodeURIComponent(querySecret)}`
+    : baseWebhookUrl;
   const body = { url: webhookUrl, allowed_updates: ['message'] };
   if (process.env.TELEGRAM_WEBHOOK_SECRET) {
     body.secret_token = process.env.TELEGRAM_WEBHOOK_SECRET;

@@ -4,3 +4,4 @@ node_modules/
 whatsapp-helper/.env
 whatsapp-helper/downloads/
 whatsapp-helper/wa-session/
+whatsapp-helper/debug/
