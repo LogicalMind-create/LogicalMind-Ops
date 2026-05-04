@@ -5,6 +5,8 @@
  * Polls the server for approved broadcasts and sends them
  * to all your WhatsApp groups via WhatsApp Web.
  *
+ * SUPPORTS: Text, Images (jpg/png), PDFs
+ *
  * ANTI-BAN MEASURES:
  *  - Human-speed typing (random 40–120ms per character)
  *  - Random delay 5–15 sec between each group
@@ -20,6 +22,8 @@ require('dotenv').config();
 const { chromium } = require('playwright');
 const path   = require('path');
 const fs     = require('fs');
+const https  = require('https');
+const http   = require('http');
 const fetch  = (...args) => import('node-fetch').then(({ default: f }) => f(...args));
 
 // ── Config ────────────────────────────────────────────────────────────────────
@@ -28,6 +32,7 @@ const DASHBOARD_SECRET        = process.env.DASHBOARD_SECRET || '';
 const POLL_MS                 = Number(process.env.POLL_INTERVAL_MS) || 30_000;
 const SESSION_DIR             = path.join(__dirname, 'wa-session');
 const GROUPS_FILE             = path.join(__dirname, 'groups.json');
+const DOWNLOADS_DIR           = path.join(__dirname, 'downloads');
 const WHATSAPP_GROUP_CHANNEL_RINGS_NAME = process.env.WHATSAPP_GROUP_CHANNEL_RINGS_NAME || '';
 
 // ── Human-behaviour helpers ───────────────────────────────────────────────────
@@ -95,6 +100,28 @@ async function reportProgress(id, sent, total, status) {
   }).catch(() => {});
 }
 
+// ── Media downloader ──────────────────────────────────────────────────────────
+function downloadFile(url, dest) {
+  return new Promise((resolve, reject) => {
+    fs.mkdirSync(path.dirname(dest), { recursive: true });
+    const file = fs.createWriteStream(dest);
+    const protocol = url.startsWith('https') ? https : http;
+    protocol.get(url, (res) => {
+      if (res.statusCode >= 300 && res.statusCode < 400 && res.headers.location) {
+        // Handle redirect
+        file.close();
+        downloadFile(res.headers.location, dest).then(resolve).catch(reject);
+        return;
+      }
+      res.pipe(file);
+      file.on('finish', () => file.close(resolve));
+    }).on('error', (err) => {
+      fs.unlink(dest, () => {});
+      reject(err);
+    });
+  });
+}
+
 // ── Load group list ───────────────────────────────────────────────────────────
 function loadGroups() {
   if (!fs.existsSync(GROUPS_FILE)) {
@@ -105,8 +132,8 @@ function loadGroups() {
   return JSON.parse(fs.readFileSync(GROUPS_FILE, 'utf-8'));
 }
 
-// ── Core: send to one group ───────────────────────────────────────────────────
-async function sendToGroup(page, groupName, message) {
+// ── Core: open a group ───────────────────────────────────────────────────────
+async function openGroup(page, groupName) {
   // Search for the group
   const searchBox = 'div[contenteditable="true"][data-tab="3"], input[type="text"][title="Search input textbox"]';
   await humanType(page, searchBox, groupName);
@@ -134,6 +161,14 @@ async function sendToGroup(page, groupName, message) {
   await page.mouse.wheel(0, rand(-80, -200));
   await sleep(rand(200, 600));
 
+  return true;
+}
+
+// ── Core: send text message ───────────────────────────────────────────────────
+async function sendTextToGroup(page, groupName, message) {
+  const opened = await openGroup(page, groupName);
+  if (!opened) return false;
+
   // Type message in chat box
   const chatBox = 'div[contenteditable="true"][data-tab="10"], div[contenteditable="true"][title="Type a message"]';
   await humanType(page, chatBox, message);
@@ -147,6 +182,108 @@ async function sendToGroup(page, groupName, message) {
   await sleep(rand(300, 600));
 
   return true;
+}
+
+// ── Core: send media (image or PDF) with caption ─────────────────────────────
+async function sendMediaToGroup(page, groupName, localFilePath, caption, mediaType) {
+  const opened = await openGroup(page, groupName);
+  if (!opened) return false;
+
+  try {
+    // Click the attachment (paperclip) button
+    const attachBtn = page.locator('[data-testid="attach-btn"], span[data-icon="attach-menu-plus"], [title="Attach"]').first();
+    if (!await attachBtn.isVisible({ timeout: 5000 }).catch(() => false)) {
+      console.warn(`  [Helper] Could not find attach button for "${groupName}" — falling back to text only`);
+      return await sendTextToGroup(page, groupName, `${caption}\n\n[Media attachment not sent — attach button not found]`);
+    }
+
+    await humanClick(page, attachBtn);
+    await sleep(rand(600, 1200));
+
+    // Choose the right file input
+    // For images: "Photos & Videos", for PDFs: "Document"
+    let fileInputSelector;
+    if (mediaType === 'image') {
+      // Click "Photos & Videos" option
+      const photosOption = page.locator('[data-testid="mi-attach-image"], input[accept="image/*,video/mp4"]').first();
+      if (await photosOption.isVisible({ timeout: 3000 }).catch(() => false)) {
+        fileInputSelector = photosOption;
+      }
+    }
+
+    if (!fileInputSelector) {
+      // Fallback: document upload (works for both images and PDFs)
+      fileInputSelector = page.locator('[data-testid="mi-attach-document"], input[accept="*"]').first();
+    }
+
+    // Set the file
+    await fileInputSelector.setInputFiles(localFilePath);
+    await sleep(rand(2000, 3500));
+
+    // Wait for media preview to appear
+    await page.waitForSelector('[data-testid="media-editor"], .media-editor, [data-testid="send-media-dialog"]', {
+      timeout: 15000
+    }).catch(() => {});
+    await sleep(rand(1000, 2000));
+
+    // Add caption if there's a caption input
+    if (caption) {
+      const captionBox = page.locator('[data-testid="caption-input"], div[contenteditable="true"][data-tab="10"]').first();
+      if (await captionBox.isVisible({ timeout: 3000 }).catch(() => false)) {
+        await captionBox.click();
+        await sleep(rand(300, 600));
+        await captionBox.type(caption, { delay: rand(30, 80) });
+        await sleep(rand(500, 1000));
+      }
+    }
+
+    // Click Send button for media
+    const sendBtn = page.locator('[data-testid="send"], button[aria-label="Send"]').first();
+    if (await sendBtn.isVisible({ timeout: 5000 }).catch(() => false)) {
+      await humanClick(page, sendBtn);
+    } else {
+      await page.keyboard.press('Enter');
+    }
+    await sleep(rand(1500, 3000));
+
+    // Clear search for next group
+    await page.keyboard.press('Escape');
+    await sleep(rand(300, 600));
+
+    return true;
+  } catch (err) {
+    console.error(`  [Helper] Media send failed for "${groupName}":`, err.message);
+    // Fallback: send text only
+    console.log(`  [Helper] Falling back to text-only for "${groupName}"`);
+    await page.keyboard.press('Escape');
+    await sleep(rand(500, 1000));
+    return await sendTextToGroup(page, groupName, `${caption}\n\n[Note: Media could not be attached]`);
+  }
+}
+
+// ── Core: send to one group (text or media) ───────────────────────────────────
+async function sendToGroup(page, groupName, broadcast) {
+  if (broadcast.media_url && broadcast.media_type) {
+    // Download media file first
+    const ext = broadcast.media_type === 'pdf' ? 'pdf' : 'jpg';
+    const localPath = path.join(DOWNLOADS_DIR, `media_${broadcast.id}.${ext}`);
+
+    if (!fs.existsSync(localPath)) {
+      try {
+        console.log(`  [Helper] Downloading media: ${broadcast.media_url}`);
+        await downloadFile(broadcast.media_url, localPath);
+        console.log(`  [Helper] Media saved to: ${localPath}`);
+      } catch (err) {
+        console.error(`  [Helper] Failed to download media:`, err.message);
+        // Fallback: send text only
+        return await sendTextToGroup(page, groupName, broadcast.message);
+      }
+    }
+
+    return await sendMediaToGroup(page, groupName, localPath, broadcast.message, broadcast.media_type);
+  } else {
+    return await sendTextToGroup(page, groupName, broadcast.message);
+  }
 }
 
 // ── Core: broadcast to all groups ────────────────────────────────────────────
@@ -176,9 +313,16 @@ async function runBroadcast(broadcast) {
 
   const total = groups.length;
   console.log(`\n[Helper] 📢 Starting broadcast to ${total} groups`);
-  console.log(`[Helper] Message: "${broadcast.message.slice(0, 60)}…"\n`);
+  console.log(`[Helper] Message: "${broadcast.message.slice(0, 60)}…"`);
+  if (broadcast.media_url) {
+    console.log(`[Helper] Media: ${broadcast.media_type} → ${broadcast.media_url}`);
+  }
+  console.log('');
 
   await reportProgress(broadcast.id, 0, total, 'sending');
+
+  // Ensure downloads dir exists
+  fs.mkdirSync(DOWNLOADS_DIR, { recursive: true });
 
   // Launch browser with saved session
   fs.mkdirSync(SESSION_DIR, { recursive: true });
@@ -206,7 +350,7 @@ async function runBroadcast(broadcast) {
     const group = groups[i];
     console.log(`[Helper] [${i + 1}/${total}] Sending to: ${group}`);
 
-    const ok = await sendToGroup(page, group, broadcast.message);
+    const ok = await sendToGroup(page, group, broadcast);
     if (ok) {
       sent++;
       await reportProgress(broadcast.id, sent, total, 'sending');
@@ -228,6 +372,13 @@ async function runBroadcast(broadcast) {
   }
 
   await browser.close();
+
+  // Cleanup downloaded media
+  if (broadcast.media_url) {
+    const ext = broadcast.media_type === 'pdf' ? 'pdf' : 'jpg';
+    const localPath = path.join(DOWNLOADS_DIR, `media_${broadcast.id}.${ext}`);
+    fs.unlink(localPath, () => {});
+  }
 
   const finalStatus = sent === total ? 'sent' : sent > 0 ? 'sent' : 'failed';
   await reportProgress(broadcast.id, sent, total, finalStatus);

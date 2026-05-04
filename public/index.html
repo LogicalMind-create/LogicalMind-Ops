@@ -317,7 +317,20 @@
           <textarea id="broadcast-compose" class="chat-input" rows="3"
             style="max-height:none;resize:vertical"
             placeholder="Type your message to all 42 WhatsApp groups…"></textarea>
-          <div style="display:flex;gap:8px;align-items:center">
+
+          <!-- Media attachment (optional) -->
+          <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">
+            <input id="broadcast-media-url" class="form-input" type="url"
+              style="flex:1;min-width:200px"
+              placeholder="Optional: paste a public image or PDF URL…" />
+            <select id="broadcast-media-type" class="form-input" style="width:110px">
+              <option value="">No media</option>
+              <option value="image">🖼 Image</option>
+              <option value="pdf">📄 PDF</option>
+            </select>
+          </div>
+
+          <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">
             <select id="broadcast-filter" class="form-input" style="width:160px">
               <option value="all">All 42 groups</option>
               <option value="dsc">DSC groups only</option>

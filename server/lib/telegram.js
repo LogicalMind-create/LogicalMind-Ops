@@ -13,7 +13,7 @@ function getBot() {
 }
 
 /**
- * Send a message to the team Telegram group.
+ * Send a plain-text or HTML message to the team Telegram group.
  * @param {string} text  — supports HTML formatting
  */
 async function notify(text) {
@@ -30,10 +30,16 @@ async function notify(text) {
 }
 
 /**
+ * Alias for notify() — used by create_shipment and shiprocket webhook.
+ * @param {string} text
+ */
+const sendMessage = notify;
+
+/**
  * Format an alert with emoji prefix.
  */
 function alert(emoji, title, body) {
   return notify(`${emoji} <b>${title}</b>\n${body}`);
 }
 
-module.exports = { notify, alert };
+module.exports = { notify, sendMessage, alert };

@@ -65,7 +65,7 @@ Current capabilities:
 - notify_team — send a message to the Telegram group
 - list_orders — list SmartBiz/Shiprocket orders; flag delayed ones
 - create_shipment, track_shipment — create and track Shiprocket shipments
-- broadcast_whatsapp — queue a message to broadcast to 43 WhatsApp groups (requires dashboard approval before sending)`;
+- broadcast_whatsapp — queue a message (with optional image or PDF) to broadcast to 43 WhatsApp groups (requires dashboard approval before sending). You can attach media_url and media_type ('image' or 'pdf') for rich broadcasts.`;
 
 // ─── Groq client ─────────────────────────────────────────────────────────────
 let _client = null;

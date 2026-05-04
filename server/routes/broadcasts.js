@@ -18,13 +18,25 @@ router.get('/', async (req, res) => {
   res.json(data);
 });
 
-// POST /api/broadcasts — create draft
+// POST /api/broadcasts — create draft (text-only or with media)
 router.post('/', async (req, res) => {
-  const { message, group_filter = 'all' } = req.body;
+  const { message, group_filter = 'all', media_url, media_type } = req.body;
   if (!message?.trim()) return res.status(400).json({ error: 'Message is required' });
+
+  if (media_url && !media_type) {
+    return res.status(400).json({ error: 'media_type is required when media_url is provided ("image" or "pdf")' });
+  }
+  if (media_type && !['image', 'pdf'].includes(media_type)) {
+    return res.status(400).json({ error: 'media_type must be "image" or "pdf"' });
+  }
+
+  const insertData = { message: message.trim(), group_filter, status: 'draft' };
+  if (media_url) insertData.media_url = media_url;
+  if (media_type) insertData.media_type = media_type;
+
   const { data, error } = await supabase
     .from('broadcasts')
-    .insert([{ message: message.trim(), group_filter, status: 'draft' }])
+    .insert([insertData])
     .select().single();
   if (error) return res.status(500).json({ error: error.message });
   res.status(201).json(data);

@@ -10,28 +10,39 @@ on:
 jobs:
   scrape-orders:
     runs-on: ubuntu-latest
-    
+
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
 
-      - name: Setup Node.js
+      - name: Setup Node.js 20
         uses: actions/setup-node@v4
         with:
-          node-version: '18'
-          
-      - name: Install dependencies
-        run: npm ci
+          node-version: '20'
+          cache: 'npm'
 
-      - name: Install Playwright and dependencies
+      - name: Install Node dependencies
+        # Use --ignore-scripts to skip postinstall/prepare hooks that can fail in CI
+        run: npm ci --ignore-scripts
+
+      - name: Install Playwright + Chromium
+        # Install playwright at package level (uses the version from package.json)
         run: |
-          npm install playwright @supabase/supabase-js dotenv
-          npx playwright install --with-deps chromium
+          npx playwright install chromium --with-deps
 
-      - name: Run Scraper
+      - name: Run SmartBiz Scraper
         env:
           SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
           SUPABASE_SERVICE_KEY: ${{ secrets.SUPABASE_SERVICE_KEY }}
           SMARTBIZ_EMAIL: ${{ secrets.SMARTBIZ_EMAIL }}
           SMARTBIZ_PASSWORD: ${{ secrets.SMARTBIZ_PASSWORD }}
         run: node scripts/smartbiz-scraper.js
+
+      - name: Upload debug screenshot on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: smartbiz-debug-screenshot
+          path: /tmp/smartbiz-debug.png
+          if-no-files-found: ignore
+          retention-days: 3

@@ -528,12 +528,18 @@ function renderBroadcasts(broadcasts) {
          <span style="font-size:11px;color:var(--muted)">${b.groups_sent}/${b.groups_total} groups</span>`
       : '';
     const dateStr = new Date(b.created_at).toLocaleString('en-IN', { timeZone:'Asia/Kolkata', dateStyle:'short', timeStyle:'short' });
+    const mediaTag = b.media_url
+      ? `<span style="font-size:11px;padding:2px 8px;border-radius:20px;background:#3b82f622;color:#3b82f6;font-weight:600">
+          ${b.media_type === 'pdf' ? '📄 PDF' : '🖼 Image'}
+        </span>`
+      : '';
     return `
       <div class="task-item">
         <div class="task-body" style="flex:1">
           <div class="task-title" style="white-space:pre-wrap">${escHtml(b.message)}</div>
           <div class="task-meta" style="margin-top:6px">
             <span style="font-size:11px;font-weight:600;padding:2px 8px;border-radius:20px;background:${color}22;color:${color}">${b.status.toUpperCase()}</span>
+            ${mediaTag}
             <span>Filter: ${escHtml(b.group_filter)}</span>
             <span>${dateStr}</span>
           </div>
@@ -551,19 +557,41 @@ function renderBroadcasts(broadcasts) {
 }
 
 async function createBroadcast() {
-  const msg    = document.getElementById('broadcast-compose')?.value?.trim();
-  const filter = document.getElementById('broadcast-filter')?.value || 'all';
+  const msg       = document.getElementById('broadcast-compose')?.value?.trim();
+  const filter    = document.getElementById('broadcast-filter')?.value || 'all';
+  const mediaUrl  = document.getElementById('broadcast-media-url')?.value?.trim() || null;
+  const mediaType = document.getElementById('broadcast-media-type')?.value || null;
+
   if (!msg) { toast('Please type a message first', 'error'); return; }
+
+  // Validate media
+  if (mediaUrl && !mediaType) {
+    toast('Please select a media type (Image or PDF)', 'error');
+    return;
+  }
+  if (!mediaUrl && mediaType) {
+    toast('Please paste a media URL for the selected type', 'error');
+    return;
+  }
+
+  const body = { message: msg, group_filter: filter };
+  if (mediaUrl)  body.media_url  = mediaUrl;
+  if (mediaType) body.media_type = mediaType;
+
   const res = await apiFetch('/api/broadcasts', {
     method: 'POST',
-    body: JSON.stringify({ message: msg, group_filter: filter }),
+    body: JSON.stringify(body),
   });
   if (res.ok) {
     document.getElementById('broadcast-compose').value = '';
-    toast('✅ Added to queue — review and approve below', 'success');
+    if (document.getElementById('broadcast-media-url')) document.getElementById('broadcast-media-url').value = '';
+    if (document.getElementById('broadcast-media-type')) document.getElementById('broadcast-media-type').value = '';
+    const mediaNote = mediaUrl ? ` with ${mediaType} attachment` : '';
+    toast(`✅ Added to queue${mediaNote} — review and approve below`, 'success');
     loadBroadcasts();
   } else {
-    toast('Failed to create broadcast', 'error');
+    const err = await res.json().catch(() => ({}));
+    toast(err.error || 'Failed to create broadcast', 'error');
   }
 }
 
