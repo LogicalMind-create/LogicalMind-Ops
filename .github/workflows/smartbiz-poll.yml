@@ -13,8 +13,6 @@ env:
 jobs:
   scrape-orders:
     runs-on: ubuntu-latest
-    env:
-      FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
 
     steps:
       - name: Checkout repository
@@ -34,6 +32,19 @@ jobs:
         # Install playwright at package level (uses the version from package.json)
         run: |
           npx playwright install chromium --with-deps
+
+      - name: Verify environment secrets
+        run: |
+          echo "Checking required secrets..."
+          [[ -z "$SUPABASE_URL" ]] && echo "❌ SUPABASE_URL not set" || echo "✓ SUPABASE_URL set"
+          [[ -z "$SUPABASE_SERVICE_KEY" ]] && echo "❌ SUPABASE_SERVICE_KEY not set" || echo "✓ SUPABASE_SERVICE_KEY set"
+          [[ -z "$SMARTBIZ_EMAIL" ]] && echo "❌ SMARTBIZ_EMAIL not set" || echo "✓ SMARTBIZ_EMAIL set"
+          [[ -z "$SMARTBIZ_PASSWORD" ]] && echo "❌ SMARTBIZ_PASSWORD not set" || echo "✓ SMARTBIZ_PASSWORD set"
+        env:
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_SERVICE_KEY: ${{ secrets.SUPABASE_SERVICE_KEY }}
+          SMARTBIZ_EMAIL: ${{ secrets.SMARTBIZ_EMAIL }}
+          SMARTBIZ_PASSWORD: ${{ secrets.SMARTBIZ_PASSWORD }}
 
       - name: Run SmartBiz Scraper
         env:

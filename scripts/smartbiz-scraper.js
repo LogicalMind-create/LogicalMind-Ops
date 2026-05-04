@@ -19,6 +19,8 @@
 
 const { chromium } = require('playwright');
 const { createClient } = require('@supabase/supabase-js');
+const os = require('os');
+const path = require('path');
 require('dotenv').config();
 
 const SUPABASE_URL         = process.env.SUPABASE_URL;
@@ -33,10 +35,56 @@ if (!SUPABASE_URL || !SUPABASE_SERVICE_KEY || !SMARTBIZ_EMAIL || !SMARTBIZ_PASSW
 
 const supabase = createClient(SUPABASE_URL, SUPABASE_SERVICE_KEY);
 
+const SCREENSHOT_PATH = path.join(os.tmpdir(), 'smartbiz-debug.png');
+const SESSION_KEY = 'smartbiz';
+
 // ── Helper: human-like random delay ─────────────────────────────
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 const randomDelay = (min = 1000, max = 2500) =>
   sleep(Math.floor(Math.random() * (max - min) + min));
+
+// ── Helper: screenshot at failure point ─────────────────────────
+async function takeFailureScreenshot(page) {
+  try {
+    await page.screenshot({ path: SCREENSHOT_PATH, fullPage: true });
+    console.log(`[SmartBiz Scraper] Screenshot saved: ${SCREENSHOT_PATH}`);
+  } catch (_) {}
+}
+
+// ── Session persistence ──────────────────────────────────────────
+async function loadSession() {
+  try {
+    const { data } = await supabase
+      .from('scraper_sessions')
+      .select('cookies, saved_at')
+      .eq('key', SESSION_KEY)
+      .maybeSingle();
+    if (!data) return null;
+    const ageMs = Date.now() - new Date(data.saved_at).getTime();
+    if (ageMs > 12 * 60 * 60 * 1000) {
+      console.log('[SmartBiz Scraper] Saved session is >12h old, will re-login.');
+      return null;
+    }
+    console.log('[SmartBiz Scraper] Found saved session, will try to restore.');
+    return JSON.parse(data.cookies);
+  } catch (e) {
+    console.warn('[SmartBiz Scraper] ⚠ Could not load saved session:', e.message);
+    return null;
+  }
+}
+
+async function saveSession(context) {
+  try {
+    const state = await context.storageState();
+    await supabase.from('scraper_sessions').upsert(
+      { key: SESSION_KEY, cookies: JSON.stringify(state), saved_at: new Date().toISOString() },
+      { onConflict: 'key' }
+    );
+    console.log('[SmartBiz Scraper] ✓ Session saved to Supabase.');
+  } catch (e) {
+    console.warn('[SmartBiz Scraper] ⚠ Failed to save session:', e.message);
+  }
+}
 
 // ── Helper: safe fill ────────────────────────────────────────────
 async function safeFill(page, selectorList, value, label) {
@@ -54,6 +102,83 @@ async function safeFill(page, selectorList, value, label) {
   return false;
 }
 
+// ── Fresh login flow ─────────────────────────────────────────────
+async function doFreshLogin(page, context) {
+  console.log('[SmartBiz Scraper] Navigating to SmartBiz login…');
+  await page.goto('https://smartbiz.amazon.in/', {
+    waitUntil: 'domcontentloaded',
+    timeout: 30000,
+  });
+  await randomDelay();
+
+  await safeClick(
+    page,
+    ['text=Sign in', 'a:has-text("Sign in")', 'button:has-text("Sign in")'],
+    'Sign In button'
+  );
+  await randomDelay();
+
+  const emailFilled = await safeFill(
+    page,
+    ['input[type="email"]', 'input[name="email"]', '#ap_email', 'input[id*="email"]'],
+    SMARTBIZ_EMAIL,
+    'email'
+  );
+  if (!emailFilled) {
+    await takeFailureScreenshot(page);
+    console.error('[SmartBiz Scraper] ❌ Email field not found. Amazon may have changed login UI.');
+    process.exit(1);
+  }
+  await randomDelay(500, 1000);
+
+  await safeClick(
+    page,
+    ['input[type="submit"]', '#continue', 'button[type="submit"]', 'input#continue'],
+    'Continue button'
+  );
+  await randomDelay();
+
+  const pwFilled = await safeFill(
+    page,
+    ['input[type="password"]', 'input[name="password"]', '#ap_password', 'input[id*="password"]'],
+    SMARTBIZ_PASSWORD,
+    'password'
+  );
+  if (!pwFilled) {
+    await takeFailureScreenshot(page);
+    console.error('[SmartBiz Scraper] ❌ Password field not found.');
+    process.exit(1);
+  }
+  await randomDelay(500, 1000);
+
+  await safeClick(
+    page,
+    ['input[type="submit"]', '#signInSubmit', 'button[type="submit"]', 'input[id*="signIn"]'],
+    'Sign In submit'
+  );
+  await page.waitForNavigation({ waitUntil: 'domcontentloaded', timeout: 20000 }).catch(() => {});
+  await randomDelay(2000, 3000);
+
+  const currentUrl = page.url();
+  console.log(`[SmartBiz Scraper] After login URL: ${currentUrl}`);
+
+  if (
+    currentUrl.includes('challenge') ||
+    currentUrl.includes('ap/mfa') ||
+    currentUrl.includes('cvf') ||
+    currentUrl.includes('ap/signin')
+  ) {
+    await takeFailureScreenshot(page);
+    console.error('[SmartBiz Scraper] ❌ Login challenge / OTP / CAPTCHA detected OR login failed.');
+    console.error('[SmartBiz Scraper] URL:', currentUrl);
+    console.error('[SmartBiz Scraper] ACTION: Log into SmartBiz manually once to seed the session, then re-run.');
+    process.exit(1);
+  }
+
+  // Save the fresh session so the next run skips login
+  await saveSession(context);
+}
+
 // ── Helper: safe click ───────────────────────────────────────────
 async function safeClick(page, selectorList, label) {
   for (const sel of selectorList) {
@@ -62,18 +187,6 @@ async function safeClick(page, selectorList, label) {
       if (await el.isVisible({ timeout: 3000 }).catch(() => false)) {
         await el.click();
         console.log(`[SmartBiz Scraper] Clicked ${label} using selector: ${sel}`);
-        return true;
-      }
-    } catch (_) {}
-  }
-  return false;
-}
-
-async function hasAnyVisibleSelector(page, selectorList, timeout = 3000) {
-  for (const sel of selectorList) {
-    try {
-      const el = page.locator(sel).first();
-      if (await el.isVisible({ timeout }).catch(() => false)) {
         return true;
       }
     } catch (_) {}
@@ -248,6 +361,10 @@ async function extractCustomerAddress(page) {
 
 (async () => {
   console.log('[SmartBiz Scraper] Starting…');
+
+  // Try to restore a previously saved session to avoid re-logging in every run
+  const savedSession = await loadSession();
+
   const browser = await chromium.launch({
     headless: true,
     args: ['--no-sandbox', '--disable-setuid-sandbox'],
@@ -255,103 +372,31 @@ async function extractCustomerAddress(page) {
   const context = await browser.newContext({
     userAgent:
       'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36',
+    ...(savedSession ? { storageState: savedSession } : {}),
   });
   const page = await context.newPage();
 
   try {
-    // ── STEP 1: Login ───────────────────────────────────────────
-    console.log('[SmartBiz Scraper] Navigating to SmartBiz login…');
-    await page.goto('https://smartbiz.amazon.in/', {
-      waitUntil: 'domcontentloaded',
-      timeout: 30000,
-    });
-    await randomDelay();
-
-    // Click Sign In if present on landing page
-    await safeClick(
-      page,
-      ['text=Sign in', 'a:has-text("Sign in")', 'button:has-text("Sign in")', 'a#nav-link-accountList'],
-      'Sign In button'
-    );
-    await randomDelay();
-
-    // Fill email field
-    let emailFilled = await safeFill(
-      page,
-      ['input[type="email"]', 'input[name="email"]', '#ap_email', 'input[id*="email"]', 'input[name="emailOrPhoneNumber"]'],
-      SMARTBIZ_EMAIL,
-      'email'
-    );
-
-    if (!emailFilled) {
-      console.warn('[SmartBiz Scraper] Email field not found on SmartBiz landing page; trying Amazon signin directly.');
-      await page.goto('https://www.amazon.in/ap/signin', {
+    // ── STEP 1: Login (or restore session) ──────────────────────
+    if (savedSession) {
+      console.log('[SmartBiz Scraper] Trying saved session — navigating to orders page directly…');
+      await page.goto('https://smartbiz.amazon.in/orders/', {
         waitUntil: 'domcontentloaded',
         timeout: 30000,
-      }).catch(() => {});
-      await randomDelay();
-      emailFilled = await safeFill(
-        page,
-        ['input[type="email"]', 'input[name="email"]', '#ap_email', 'input[id*="email"]', 'input[name="emailOrPhoneNumber"]'],
-        SMARTBIZ_EMAIL,
-        'email'
-      );
-    }
+      });
+      await randomDelay(1500, 2500);
+      const sessionUrl = page.url();
+      console.log(`[SmartBiz Scraper] Session check URL: ${sessionUrl}`);
 
-    if (!emailFilled) {
-      await browser.close();
-      console.error('[SmartBiz Scraper] ❌ Email field not found. Amazon may have changed login UI.');
-      process.exit(1);
-    }
-    await randomDelay(500, 1000);
-
-    // Continue / Next button
-    await safeClick(
-      page,
-      ['input[type="submit"]', '#continue', 'button[type="submit"]', 'input#continue'],
-      'Continue button'
-    );
-    await randomDelay();
-
-    // Fill password field
-    const pwFilled = await safeFill(
-      page,
-      ['input[type="password"]', 'input[name="password"]', '#ap_password', 'input[id*="password"]'],
-      SMARTBIZ_PASSWORD,
-      'password'
-    );
-    if (!pwFilled) {
-      await browser.close();
-      console.error('[SmartBiz Scraper] ❌ Password field not found.');
-      process.exit(1);
-    }
-    await randomDelay(500, 1000);
-
-    // Submit login
-    await safeClick(
-      page,
-      ['input[type="submit"]', '#signInSubmit', 'button[type="submit"]', 'input[id*="signIn"]'],
-      'Sign In submit'
-    );
-    await page.waitForNavigation({ waitUntil: 'domcontentloaded', timeout: 20000 }).catch(() => {});
-    await randomDelay(2000, 3000);
-
-    // ── CHECK: Login challenge (OTP / passkey / CAPTCHA) ─────────
-    const currentUrl = page.url();
-    console.log(`[SmartBiz Scraper] After login URL: ${currentUrl}`);
-
-    if (
-      currentUrl.includes('challenge') ||
-      currentUrl.includes('ap/mfa') ||
-      currentUrl.includes('cvf') ||
-      currentUrl.includes('ap/signin') ||
-      currentUrl.includes('ap/oa')
-    ) {
-      await browser.close();
-      console.error('[SmartBiz Scraper] ❌ Login challenge detected (OTP/passkey/CAPTCHA) OR login failed.');
-      console.error('[SmartBiz Scraper] ACTION REQUIRED: Log in manually to SmartBiz once, or disable 2FA for this account.');
-      console.error('[SmartBiz Scraper] Current URL:', currentUrl);
-      process.exit(1);
+      if (sessionUrl.includes('ap/signin') || sessionUrl.includes('signin')) {
+        console.log('[SmartBiz Scraper] Saved session expired — falling back to fresh login.');
+        // Fall through to fresh login below
+        await doFreshLogin(page, context);
+      } else {
+        console.log('[SmartBiz Scraper] ✓ Session valid — skipping login.');
+      }
+    } else {
+      await doFreshLogin(page, context);
     }
 
     // ── STEP 2: Navigate to Orders ──────────────────────────────
@@ -385,9 +430,7 @@ async function extractCustomerAddress(page) {
     if (!selectorMatched) {
       console.warn('[SmartBiz Scraper] ⚠ No order rows found with known selectors.');
       console.warn('[SmartBiz Scraper] This could mean: 0 orders, or the page structure changed.');
-      const screenshotPath = '/tmp/smartbiz-debug.png';
-      await page.screenshot({ path: screenshotPath }).catch(() => {});
-      console.log(`[SmartBiz Scraper] Debug screenshot saved to: ${screenshotPath}`);
+      await takeFailureScreenshot(page);
     }
 
     // Extract basic order info + clickable links from listing page
@@ -402,32 +445,19 @@ async function extractCustomerAddress(page) {
         return 'pending';
       };
 
-      let rows = Array.from(document.querySelectorAll(
-        '[data-testid="order-row"], .order-item, [class*="OrderRow"], [class*="orderCard"], [class*="order-card"], tr[data-order-id], div[data-order-id]'
-      ));
-
-      if (rows.length === 0) {
-        rows = Array.from(document.querySelectorAll('div[role="row"]'));
-      }
+      const rows = document.querySelectorAll(
+        '[data-testid="order-row"], .order-item, [class*="OrderRow"], [class*="orderCard"], [class*="order-card"]'
+      );
 
       rows.forEach((row) => {
         const textContent = row.innerText || '';
 
         // Extract order ID — Amazon format: 403-1234567-1234567
-        let orderId = null;
         const orderIdMatch = textContent.match(/\d{3}-\d{7}-\d{7}/);
-        if (orderIdMatch) {
-          orderId = orderIdMatch[0];
-        } else if (row.dataset && row.dataset.orderId) {
-          orderId = row.dataset.orderId;
-        } else {
-          const hrefOrderMatch = (row.querySelector('a[href*="/orders/"]') || {}).href || '';
-          const pathMatch = hrefOrderMatch.match(/\/orders\/(\d{3}-\d{7}-\d{7})/);
-          if (pathMatch) orderId = pathMatch[1];
-        }
+        const orderId = orderIdMatch ? orderIdMatch[0] : null;
 
         // Extract product name
-        const titleEl = row.querySelector('h2, h3, [class*="title"], [class*="product"], [class*="name"], [class*="orderTitle"], [class*="Title"]');
+        const titleEl = row.querySelector('h2, h3, [class*="title"], [class*="product"], [class*="name"], [class*="Title"]');
         const productName = titleEl ? titleEl.innerText.trim() : '';
 
         // Status
@@ -449,13 +479,8 @@ async function extractCustomerAddress(page) {
         const customerName = customerEl ? customerEl.innerText.trim() : '';
 
         // Detail link (for navigating into the order)
-        const link = row.querySelector('a[href*="/orders/"]') || row.querySelector('a[href*="order"]');
-        const detailUrl = link ? new URL(link.href, document.baseURI).href : null;
-
-        if (!orderId && detailUrl) {
-          const pathMatch = detailUrl.match(/\/orders\/(\d{3}-\d{7}-\d{7})/);
-          if (pathMatch) orderId = pathMatch[1];
-        }
+        const link = row.querySelector('a[href*="order"]');
+        const detailUrl = link ? link.href : null;
 
         if (orderId) {
           results.push({

@@ -128,6 +128,15 @@ alter table orders add column if not exists scraped_at      timestamptz default 
 alter table orders add column if not exists order_date      timestamptz;
 
 -- ─────────────────────────────────────────────────────────────────
+-- Scraper session store (browser cookies for SmartBiz login persistence)
+-- ─────────────────────────────────────────────────────────────────
+create table if not exists scraper_sessions (
+  key        text primary key,
+  cookies    text not null,
+  saved_at   timestamptz not null default now()
+);
+
+-- ─────────────────────────────────────────────────────────────────
 -- Phase 4 tables (uncomment when ready):
 -- ─────────────────────────────────────────────────────────────────
 
