@@ -111,22 +111,40 @@ async function doFreshLogin(page, context) {
   });
   await randomDelay();
 
-  await safeClick(
+  // Try to find and click Sign in button
+  const signInClicked = await safeClick(
     page,
-    ['text=Sign in', 'a:has-text("Sign in")', 'button:has-text("Sign in")'],
+    ['text=Sign in', 'a:has-text("Sign in")', 'button:has-text("Sign in")', '[data-testid="signin-button"]'],
     'Sign In button'
   );
+
+  if (!signInClicked) {
+    console.log('[SmartBiz Scraper] ℹ No Sign In button found, may already be on login page.');
+  }
+
   await randomDelay();
 
+  // Enhanced email field detection
   const emailFilled = await safeFill(
     page,
-    ['input[type="email"]', 'input[name="email"]', '#ap_email', 'input[id*="email"]'],
+    [
+      'input[type="email"]',
+      'input[name="email"]',
+      '#ap_email',
+      'input[id*="email"]',
+      'input[placeholder*="email" i]',
+      'input[placeholder*="Email" i]',
+      'input[placeholder*="mobile" i]',
+      'input:not([type="password"])[type="text"]'
+    ],
     SMARTBIZ_EMAIL,
     'email'
   );
   if (!emailFilled) {
     await takeFailureScreenshot(page);
-    console.error('[SmartBiz Scraper] ❌ Email field not found. Amazon may have changed login UI.');
+    console.error('[SmartBiz Scraper] ❌ Email field not found.');
+    console.error('[SmartBiz Scraper] The Amazon login page structure may have changed.');
+    console.error('[SmartBiz Scraper] Screenshot saved for inspection: C:\\Users\\kumar\\AppData\\Local\\Temp\\smartbiz-debug.png');
     process.exit(1);
   }
   await randomDelay(500, 1000);
@@ -169,9 +187,28 @@ async function doFreshLogin(page, context) {
     currentUrl.includes('ap/signin')
   ) {
     await takeFailureScreenshot(page);
-    console.error('[SmartBiz Scraper] ❌ Login challenge / OTP / CAPTCHA detected OR login failed.');
+    console.error('[SmartBiz Scraper] ❌ Amazon 2FA / OTP / CAPTCHA required.');
     console.error('[SmartBiz Scraper] URL:', currentUrl);
-    console.error('[SmartBiz Scraper] ACTION: Log into SmartBiz manually once to seed the session, then re-run.');
+    console.error('');
+    console.error('[SmartBiz Scraper] 2FA blocks automated login. Choose one:');
+    console.error('');
+    console.error('  OPTION 1 (Recommended): Disable 2FA');
+    console.error('    → Go to: https://www.amazon.in/account-security/');
+    console.error('    → Find "Two-Step Verification" settings');
+    console.error('    → Turn off 2FA (or set up app-specific password)');
+    console.error('');
+    console.error('  OPTION 2: Use App Password');
+    console.error('    → Enable 2FA if not already enabled');
+    console.error('    → Create app-specific password in Amazon settings');
+    console.error('    → Update SMARTBIZ_PASSWORD in .env file');
+    console.error('');
+    console.error('  OPTION 3: Manual Login + Session Seeding');
+    console.error('    → Manually log into https://smartbiz.amazon.in/');
+    console.error('    → Complete 2FA on browser');
+    console.error('    → Session will be cached for ~12 hours');
+    console.error('    → GitHub Actions will use this cached session');
+    console.error('');
+    console.error('[SmartBiz Scraper] Once resolved, re-run: node scripts/smartbiz-scraper.js');
     process.exit(1);
   }
 
