@@ -69,6 +69,18 @@ async function safeClick(page, selectorList, label) {
   return false;
 }
 
+async function hasAnyVisibleSelector(page, selectorList, timeout = 3000) {
+  for (const sel of selectorList) {
+    try {
+      const el = page.locator(sel).first();
+      if (await el.isVisible({ timeout }).catch(() => false)) {
+        return true;
+      }
+    } catch (_) {}
+  }
+  return false;
+}
+
 // ── Helper: extract text from first matching selector ────────────
 async function extractText(page, selectorList, fallback = '') {
   for (const sel of selectorList) {
@@ -258,18 +270,34 @@ async function extractCustomerAddress(page) {
     // Click Sign In if present on landing page
     await safeClick(
       page,
-      ['text=Sign in', 'a:has-text("Sign in")', 'button:has-text("Sign in")'],
+      ['text=Sign in', 'a:has-text("Sign in")', 'button:has-text("Sign in")', 'a#nav-link-accountList'],
       'Sign In button'
     );
     await randomDelay();
 
     // Fill email field
-    const emailFilled = await safeFill(
+    let emailFilled = await safeFill(
       page,
-      ['input[type="email"]', 'input[name="email"]', '#ap_email', 'input[id*="email"]'],
+      ['input[type="email"]', 'input[name="email"]', '#ap_email', 'input[id*="email"]', 'input[name="emailOrPhoneNumber"]'],
       SMARTBIZ_EMAIL,
       'email'
     );
+
+    if (!emailFilled) {
+      console.warn('[SmartBiz Scraper] Email field not found on SmartBiz landing page; trying Amazon signin directly.');
+      await page.goto('https://www.amazon.in/ap/signin', {
+        waitUntil: 'domcontentloaded',
+        timeout: 30000,
+      }).catch(() => {});
+      await randomDelay();
+      emailFilled = await safeFill(
+        page,
+        ['input[type="email"]', 'input[name="email"]', '#ap_email', 'input[id*="email"]', 'input[name="emailOrPhoneNumber"]'],
+        SMARTBIZ_EMAIL,
+        'email'
+      );
+    }
+
     if (!emailFilled) {
       await browser.close();
       console.error('[SmartBiz Scraper] ❌ Email field not found. Amazon may have changed login UI.');
@@ -316,7 +344,8 @@ async function extractCustomerAddress(page) {
       currentUrl.includes('challenge') ||
       currentUrl.includes('ap/mfa') ||
       currentUrl.includes('cvf') ||
-      currentUrl.includes('ap/signin')
+      currentUrl.includes('ap/signin') ||
+      currentUrl.includes('ap/oa')
     ) {
       await browser.close();
       console.error('[SmartBiz Scraper] ❌ Login challenge detected (OTP/passkey/CAPTCHA) OR login failed.');
@@ -373,19 +402,32 @@ async function extractCustomerAddress(page) {
         return 'pending';
       };
 
-      const rows = document.querySelectorAll(
-        '[data-testid="order-row"], .order-item, [class*="OrderRow"], [class*="orderCard"], [class*="order-card"]'
-      );
+      let rows = Array.from(document.querySelectorAll(
+        '[data-testid="order-row"], .order-item, [class*="OrderRow"], [class*="orderCard"], [class*="order-card"], tr[data-order-id], div[data-order-id]'
+      ));
+
+      if (rows.length === 0) {
+        rows = Array.from(document.querySelectorAll('div[role="row"]'));
+      }
 
       rows.forEach((row) => {
         const textContent = row.innerText || '';
 
         // Extract order ID — Amazon format: 403-1234567-1234567
+        let orderId = null;
         const orderIdMatch = textContent.match(/\d{3}-\d{7}-\d{7}/);
-        const orderId = orderIdMatch ? orderIdMatch[0] : null;
+        if (orderIdMatch) {
+          orderId = orderIdMatch[0];
+        } else if (row.dataset && row.dataset.orderId) {
+          orderId = row.dataset.orderId;
+        } else {
+          const hrefOrderMatch = (row.querySelector('a[href*="/orders/"]') || {}).href || '';
+          const pathMatch = hrefOrderMatch.match(/\/orders\/(\d{3}-\d{7}-\d{7})/);
+          if (pathMatch) orderId = pathMatch[1];
+        }
 
         // Extract product name
-        const titleEl = row.querySelector('h2, h3, [class*="title"], [class*="product"], [class*="name"], [class*="Title"]');
+        const titleEl = row.querySelector('h2, h3, [class*="title"], [class*="product"], [class*="name"], [class*="orderTitle"], [class*="Title"]');
         const productName = titleEl ? titleEl.innerText.trim() : '';
 
         // Status
@@ -407,8 +449,13 @@ async function extractCustomerAddress(page) {
         const customerName = customerEl ? customerEl.innerText.trim() : '';
 
         // Detail link (for navigating into the order)
-        const link = row.querySelector('a[href*="order"]');
-        const detailUrl = link ? link.href : null;
+        const link = row.querySelector('a[href*="/orders/"]') || row.querySelector('a[href*="order"]');
+        const detailUrl = link ? new URL(link.href, document.baseURI).href : null;
+
+        if (!orderId && detailUrl) {
+          const pathMatch = detailUrl.match(/\/orders\/(\d{3}-\d{7}-\d{7})/);
+          if (pathMatch) orderId = pathMatch[1];
+        }
 
         if (orderId) {
           results.push({
