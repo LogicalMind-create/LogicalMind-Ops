@@ -1,6 +1,6 @@
 'use strict';
 require('dotenv').config();
-const { GoogleGenerativeAI } = require('@google/generative-ai');
+const Groq = require('groq-sdk');
 const supabase = require('../lib/supabase');
 
 // ─── Tool registry ───────────────────────────────────────────────────────────
@@ -15,7 +15,31 @@ const toolModules = {
   broadcast_whatsapp: require('../tools/broadcast_whatsapp'),
 };
 
-const functionDeclarations = Object.values(toolModules).map((m) => m.declaration);
+// ─── Convert Gemini-style declarations → OpenAI/Groq format ─────────────────
+function convertSchema(schema) {
+  if (!schema) return {};
+  const out = {};
+  if (schema.type)        out.type        = schema.type.toLowerCase();
+  if (schema.description) out.description = schema.description;
+  if (schema.enum)        out.enum        = schema.enum;
+  if (schema.items)       out.items       = convertSchema(schema.items);
+  if (schema.properties) {
+    out.properties = {};
+    for (const [k, v] of Object.entries(schema.properties))
+      out.properties[k] = convertSchema(v);
+  }
+  if (schema.required)    out.required    = schema.required;
+  return out;
+}
+
+const tools = Object.values(toolModules).map(m => ({
+  type: 'function',
+  function: {
+    name:        m.declaration.name,
+    description: m.declaration.description,
+    parameters:  convertSchema(m.declaration.parameters),
+  },
+}));
 
 // ─── System prompt ───────────────────────────────────────────────────────────
 const SYSTEM_PROMPT = `You are the LogicalMind Ops agent — the internal AI assistant for Logical Mind Education.
@@ -34,116 +58,100 @@ RULES:
 3. For ambiguous requests, ask one clarifying question rather than guessing.
 4. Currency is always in Indian Rupees (₹).
 5. Keep responses concise — the team is busy. No unnecessary padding.
-6. When assigning tasks to "me", treat it as the currently logged-in user. When you don't know the person's name, use "me" as the person field.
+6. When assigning tasks to "me", treat it as the currently logged-in user.
 
-Current capabilities (Phase 1, 2 & 3):
-- assign_task: Add a task for yourself or your teammate
-- list_tasks: View pending/completed tasks
-- complete_task: Mark a task done
-- notify_team: Send a message to the Telegram group
-- list_orders: List your Amazon SmartBiz orders. Pay attention to the agent_note which indicates delayed orders.
-- create_shipment: Creates a Shiprocket shipment for a given order ID.
-- track_shipment: Gets current tracking info for an AWB.
-- broadcast_whatsapp: Queue a message to broadcast to all 43 WhatsApp student groups. The message goes into an approval queue — the user must approve it in the Broadcasts page of the dashboard before it sends. IMPORTANT: always confirm the message text with the user before calling this tool.
+Current capabilities:
+- assign_task, list_tasks, complete_task — manage your team's task board
+- notify_team — send a message to the Telegram group
+- list_orders — list SmartBiz/Shiprocket orders; flag delayed ones
+- create_shipment, track_shipment — create and track Shiprocket shipments
+- broadcast_whatsapp — queue a message to broadcast to 43 WhatsApp groups (requires dashboard approval before sending)`;
 
-Coming soon (not yet available): finance tracking, app notifications.
-
-If the user asks for something you can't do yet, let them know it's on the roadmap and suggest what you CAN do instead.`;
-
-// ─── Gemini setup ────────────────────────────────────────────────────────────
-let genAI = null;
-let model = null;
-
-function getModel() {
-  if (!model) {
-    if (!process.env.GEMINI_API_KEY) {
-      throw new Error('GEMINI_API_KEY not set in environment');
-    }
-    genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY);
-    model = genAI.getGenerativeModel({
-      model: 'gemini-2.0-flash',
-      systemInstruction: SYSTEM_PROMPT,
-      tools: [{ functionDeclarations }],
-    });
+// ─── Groq client ─────────────────────────────────────────────────────────────
+let _client = null;
+function getClient() {
+  if (!_client) {
+    if (!process.env.GROQ_API_KEY) throw new Error('GROQ_API_KEY not set in environment');
+    _client = new Groq({ apiKey: process.env.GROQ_API_KEY });
   }
-  return model;
+  return _client;
 }
 
 // ─── Save message to DB ──────────────────────────────────────────────────────
-async function saveMessage(role, content, run_id) {
+async function saveMessage(role, content, runId) {
   try {
-    await supabase
-      .from('chat_messages')
-      .insert([{ role, content, run_id }]);
+    await supabase.from('chat_messages').insert([{ role, content, run_id: runId }]);
   } catch (e) {
     console.error('[Agent] Failed to save message:', e.message);
   }
 }
 
 // ─── Main agent function ─────────────────────────────────────────────────────
-/**
- * Run the agent with a user message, maintaining conversation history.
- * @param {string} userMessage
- * @param {Array}  history   — Array of {role, parts} objects (Gemini format)
- * @param {string} runId     — Unique ID for this conversation run
- * @returns {{ reply: string, history: Array, toolsUsed: string[] }}
- */
 async function runAgent(userMessage, history = [], runId = null) {
-  const m = getModel();
-  const chat = m.startChat({ history });
+  const client = getClient();
   const toolsUsed = [];
 
   await saveMessage('user', userMessage, runId);
 
-  // Initial send
-  let response = await chat.sendMessage(userMessage);
-  let candidate = response.response;
+  // Build messages: system + history + new user message
+  const messages = [
+    { role: 'system', content: SYSTEM_PROMPT },
+    ...history,
+    { role: 'user', content: userMessage },
+  ];
 
-  // Agentic loop — keep calling tools until the model stops
+  // Agentic loop — keep calling tools until model stops
   while (true) {
-    const fnCalls = candidate.functionCalls();
-    if (!fnCalls || fnCalls.length === 0) break;
+    const response = await client.chat.completions.create({
+      model:       'llama-3.3-70b-versatile',
+      messages,
+      tools,
+      tool_choice: 'auto',
+      max_tokens:  2048,
+      temperature: 0.3,
+    });
 
-    // Execute all requested tool calls in parallel
-    const fnResults = await Promise.all(
-      fnCalls.map(async (fc) => {
-        const toolName = fc.name;
-        const args = fc.args;
+    const msg = response.choices[0].message;
+    messages.push(msg);
+
+    // No tool calls → final answer
+    if (!msg.tool_calls || msg.tool_calls.length === 0) {
+      const reply = msg.content || '';
+      await saveMessage('assistant', reply, runId);
+      // Return history without system prompt (caller stores it)
+      return { reply, history: messages.slice(1), toolsUsed };
+    }
+
+    // Execute tool calls in parallel
+    const toolResults = await Promise.all(
+      msg.tool_calls.map(async (tc) => {
+        const toolName = tc.function.name;
+        let args = {};
+        try { args = JSON.parse(tc.function.arguments); } catch (_) {}
         toolsUsed.push(toolName);
 
         console.log(`[Agent] Calling tool: ${toolName}`, args);
 
         let result;
         try {
-          const toolModule = toolModules[toolName];
-          if (!toolModule) throw new Error(`Unknown tool: ${toolName}`);
-          result = await toolModule.execute(args);
+          const mod = toolModules[toolName];
+          if (!mod) throw new Error(`Unknown tool: ${toolName}`);
+          result = await mod.execute(args);
         } catch (err) {
           console.error(`[Agent] Tool ${toolName} failed:`, err.message);
           result = { error: err.message };
         }
 
         return {
-          functionResponse: {
-            name: toolName,
-            response: result,
-          },
+          role:         'tool',
+          tool_call_id: tc.id,
+          content:      JSON.stringify(result),
         };
       })
     );
 
-    // Feed results back to model
-    response = await chat.sendMessage(fnResults);
-    candidate = response.response;
+    messages.push(...toolResults);
   }
-
-  const reply = candidate.text();
-  await saveMessage('assistant', reply, runId);
-
-  // Return updated history for the caller to store in session
-  const updatedHistory = await chat.getHistory();
-
-  return { reply, history: updatedHistory, toolsUsed };
 }
 
 module.exports = { runAgent };
