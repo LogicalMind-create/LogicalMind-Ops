@@ -165,7 +165,7 @@ async function loadShiprocketOrders({ filterNorm, limit, now, existingIds }) {
 
 async function execute({ status, limit = 20 }) {
   const now = new Date();
-  const filterNorm = status ? normaliseStatus(status) : '';
+  const filterNorm = status && status !== 'all' ? normaliseStatus(status) : '';
   const warnings = [];
   let orders = [];
 
