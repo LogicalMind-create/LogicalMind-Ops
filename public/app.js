@@ -622,7 +622,8 @@ async function approveBroadcast(id) {
       if (!stillSending) clearInterval(interval);
     }, 5000);
   } else {
-    toast('Failed to approve', 'error');
+    const err = await res.json().catch(() => ({}));
+    toast(err.error || 'Failed to approve', 'error');
   }
 }
 

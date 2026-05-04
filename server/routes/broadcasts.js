@@ -48,7 +48,8 @@ router.post('/:id/approve', async (req, res) => {
     .from('broadcasts')
     .update({ status: 'approved', approved_at: new Date().toISOString() })
     .eq('id', req.params.id).eq('status', 'draft')
-    .select().single();
+    .select()
+    .maybeSingle();
   if (error) return res.status(500).json({ error: error.message });
   if (!data) return res.status(404).json({ error: 'Not found or already approved' });
   res.json(data);
