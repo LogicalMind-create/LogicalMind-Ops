@@ -7,28 +7,10 @@
 // ── Config ──────────────────────────────────────────────────────
 const API_BASE = '';   // same origin
 let SESSION_ID = localStorage.getItem('lm_session_id') || null;
-const DASHBOARD_SECRET_PLACEHOLDER = '__DASHBOARD_SECRET_PLACEHOLDER__';
-
-function normalizeSecret(value) {
-  const secret = String(value || '').trim();
-  return secret && secret !== DASHBOARD_SECRET_PLACEHOLDER ? secret : '';
-}
-
-function getDashboardSecret() {
-  return normalizeSecret(window.__DASHBOARD_SECRET__) || normalizeSecret(localStorage.getItem('lm_secret'));
-}
 
 function apiFetch(path, opts = {}) {
   const headers = { 'Content-Type': 'application/json', ...(opts.headers || {}) };
-  const SECRET = getDashboardSecret();
-  if (SECRET) headers['X-Dashboard-Secret'] = SECRET;
   return fetch(API_BASE + path, { ...opts, headers });
-}
-
-function handleUnauthorized() {
-  localStorage.removeItem('lm_secret');
-  toast('Dashboard secret is missing or expired. Please enter it again.', 'error');
-  promptSecret();
 }
 
 // ── Navigation ───────────────────────────────────────────────────
@@ -191,11 +173,6 @@ async function sendMessage() {
     hideTyping();
 
     if (!res.ok) {
-      if (res.status === 401) {
-        renderMessage('agent', 'Dashboard authorization failed. Re-enter the dashboard secret and try again.');
-        handleUnauthorized();
-        return;
-      }
       const err = await res.json().catch(() => ({}));
       const errMsg = err.detail || err.error || 'Something went wrong. Please try again.';
       renderMessage('agent', `⚠️ ${errMsg}`);
@@ -656,14 +633,6 @@ async function deleteBroadcast(id) {
 }
 
 // ── Secret setup ─────────────────────────────────────────────────
-function promptSecret() {
-  const s = prompt('Enter your dashboard secret (from .env DASHBOARD_SECRET):\n(Leave blank if not configured)');
-  if (s !== null) {
-    localStorage.setItem('lm_secret', s);
-    location.reload();
-  }
-}
-
 // ── Init ─────────────────────────────────────────────────────────
 document.addEventListener('DOMContentLoaded', () => {
   // Set today's date as default for new task form

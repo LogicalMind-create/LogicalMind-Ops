@@ -24,25 +24,12 @@ const chatLimiter = rateLimit({
   legacyHeaders: false,
 });
 
-// ─── Auth middleware ─────────────────────────────────────────────────────────
-function authMiddleware(req, res, next) {
-  const secret = process.env.DASHBOARD_SECRET;
-  if (!secret) {
-    console.warn('[⚠️  Auth] DASHBOARD_SECRET not set. Dashboard is unprotected.');
-    return next();
-  }
-  // Apply auth check in ALL environments (no dev bypass)
-  const provided = req.headers['x-dashboard-secret'];
-  if (provided === secret) return next();
-  return res.status(401).json({ error: 'Unauthorized' });
-}
-
 // ─── Routes ─────────────────────────────────────────────────────────────────
 app.use('/health',         require('./routes/health'));
-app.use('/api/chat',       authMiddleware, chatLimiter, require('./routes/chat'));
-app.use('/api/tasks',      authMiddleware, require('./routes/tasks'));
-app.use('/api/orders',     authMiddleware, require('./routes/orders'));
-app.use('/api/broadcasts', authMiddleware, require('./routes/broadcasts'));
+app.use('/api/chat',       chatLimiter, require('./routes/chat'));
+app.use('/api/tasks',      require('./routes/tasks'));
+app.use('/api/orders',     require('./routes/orders'));
+app.use('/api/broadcasts', require('./routes/broadcasts'));
 
 // Webhooks (no auth — external services call these)
 app.use('/webhooks/shiprocket', require('./webhooks/shiprocket'));
