@@ -3,13 +3,17 @@ const axios = require('axios');
 let _token = null;
 let _tokenExpiry = null;
 
+function cleanEnvSecret(value) {
+  return String(value || '').trim().replace(/^['"]|['"]$/g, '');
+}
+
 async function getToken() {
   if (_token && _tokenExpiry && Date.now() < _tokenExpiry) {
     return _token;
   }
 
-  const email = process.env.SHIPROCKET_EMAIL;
-  const password = process.env.SHIPROCKET_PASSWORD;
+  const email = cleanEnvSecret(process.env.SHIPROCKET_EMAIL);
+  const password = cleanEnvSecret(process.env.SHIPROCKET_PASSWORD);
 
   if (!email || !password) {
     throw new Error('SHIPROCKET_EMAIL and SHIPROCKET_PASSWORD are not set in .env');
@@ -27,8 +31,9 @@ async function getToken() {
     
     return _token;
   } catch (err) {
+    const details = err.response?.data?.message || err.response?.data?.error || err.message;
     console.error('[Shiprocket] Auth failed:', err.response?.data || err.message);
-    throw new Error('Failed to authenticate with Shiprocket');
+    throw new Error(`Failed to authenticate with Shiprocket${details ? `: ${details}` : ''}`);
   }
 }
 
