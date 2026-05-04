@@ -56,6 +56,7 @@ create table if not exists orders (
   amount        numeric(10,2),
   status        text default 'pending',
   awb           text,
+  order_date    timestamptz,
   scraped_at    timestamptz default now(),
   shipped_at    timestamptz,
   delivered_at  timestamptz,

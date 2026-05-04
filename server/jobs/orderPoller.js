@@ -53,7 +53,7 @@ async function poll() {
     for (const order of ordersArr) {
       const orderId = order.id || order.order_id;
       const status = (order.status || '').toLowerCase();
-      const createdAt = new Date(order.created_at || order.order_date);
+      const createdAt = new Date(order.order_date || order.created_at);
       const ageHours = (now - createdAt) / (1000 * 60 * 60);
 
       // Initialize state for this order if not exists

@@ -197,6 +197,14 @@ async function safeClick(page, selectorList, label) {
 
     const orders = await page.evaluate(() => {
       const results = [];
+      const normaliseStatus = (statusText = '') => {
+        const status = statusText.toLowerCase();
+        if (status.includes('ready') && status.includes('ship')) return 'ready_to_ship';
+        if (status.includes('deliver')) return 'delivered';
+        if (status.includes('cancel')) return 'cancelled';
+        if (status.includes('transit') || status.includes('shipped')) return 'shipped';
+        return 'pending';
+      };
 
       // Strategy 1: data-testid attributes (most reliable)
       const rows = document.querySelectorAll(
@@ -218,6 +226,11 @@ async function safeClick(page, selectorList, label) {
         const statusEl = row.querySelector('[class*="status"], [class*="Status"], [data-testid*="status"]');
         const statusText = statusEl ? statusEl.innerText.trim().toLowerCase() : 'pending';
 
+        const dateMatch = textContent.match(
+          /\b(?:\d{1,2}\s+(?:Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Sept|Oct|Nov|Dec)[a-z]*\s+\d{4}|\d{1,2}[/-]\d{1,2}[/-]\d{2,4})\b/i
+        );
+        const orderDate = dateMatch ? new Date(dateMatch[0]) : null;
+
         // Amount
         const amountMatch = textContent.match(/₹\s?[\d,]+\.?\d*/);
         const amount = amountMatch ? parseFloat(amountMatch[0].replace(/[₹,\s]/g, '')) : null;
@@ -235,11 +248,8 @@ async function safeClick(page, selectorList, label) {
             sku: '',
             quantity: 1,
             amount: amount,
-            status:
-              statusText.includes('ship') ? 'shipped'
-              : statusText.includes('deliver') ? 'delivered'
-              : statusText.includes('cancel') ? 'cancelled'
-              : 'pending',
+            status: normaliseStatus(statusText),
+            order_date: orderDate && !Number.isNaN(orderDate.getTime()) ? orderDate.toISOString() : null,
           });
         }
       });
@@ -255,7 +265,7 @@ async function safeClick(page, selectorList, label) {
     for (const order of orders) {
       const { data: existing, error: fetchErr } = await supabase
         .from('orders')
-        .select('id, status')
+        .select('id, status, order_date')
         .eq('external_id', order.external_id)
         .maybeSingle(); // ← maybeSingle() doesn't throw if not found
 
@@ -275,10 +285,14 @@ async function safeClick(page, selectorList, label) {
           newCount++;
           console.log(`[SmartBiz Scraper] ✅ Inserted: ${order.external_id} (${order.status})`);
         }
-      } else if (existing.status !== order.status) {
+      } else if (existing.status !== order.status || (!existing.order_date && order.order_date)) {
         const { error: updateErr } = await supabase
           .from('orders')
-          .update({ status: order.status, scraped_at: new Date().toISOString() })
+          .update({
+            status: order.status,
+            order_date: existing.order_date || order.order_date,
+            scraped_at: new Date().toISOString(),
+          })
           .eq('external_id', order.external_id);
         if (!updateErr) {
           updatedCount++;

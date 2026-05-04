@@ -20,3 +20,4 @@ ALTER TABLE broadcasts ADD COLUMN IF NOT EXISTS media_type TEXT CHECK (media_typ
 
 -- Migration: ensure scraped_at exists in orders table for stat queries
 ALTER TABLE orders ADD COLUMN IF NOT EXISTS scraped_at TIMESTAMPTZ DEFAULT now();
+ALTER TABLE orders ADD COLUMN IF NOT EXISTS order_date TIMESTAMPTZ;

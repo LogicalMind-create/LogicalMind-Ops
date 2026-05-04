@@ -2,11 +2,12 @@
 const express = require('express');
 const router = express.Router();
 const supabase = require('../lib/supabase');
+const { requireWebhookSecret } = require('../lib/webhookAuth');
 
 // Only forward messages from this chat (your Telegram group)
 const ALLOWED_CHAT_ID = process.env.TELEGRAM_CHAT_ID ? Number(process.env.TELEGRAM_CHAT_ID) : null;
 
-router.post('/', async (req, res) => {
+router.post('/', requireWebhookSecret(['TELEGRAM_WEBHOOK_SECRET', 'WEBHOOK_SECRET']), async (req, res) => {
   // Always respond 200 immediately so Telegram doesn't retry
   res.status(200).json({ ok: true });
 

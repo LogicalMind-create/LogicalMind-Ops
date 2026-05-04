@@ -98,7 +98,10 @@ async function execute({ status, limit = 20 }) {
       .limit(limit);
 
     if (status) {
-      query = query.eq('status', normaliseStatus(status));
+      const norm = normaliseStatus(status);
+      query = norm === 'pending'
+        ? query.in('status', ['pending', 'ready_to_ship'])
+        : query.eq('status', norm);
     }
 
     const { data, error } = await query;
@@ -108,14 +111,15 @@ async function execute({ status, limit = 20 }) {
       for (const order of data) {
         if (srIds.has(String(order.external_id))) continue;
 
-        const createdAt = new Date(order.created_at);
+        const createdAt = new Date(order.order_date || order.created_at || order.scraped_at);
         const diffDays  = isNaN(createdAt) ? null : Math.floor((now - createdAt) / (1000 * 60 * 60 * 24));
 
         let agentNote = 'Normal';
-        if (order.status === 'pending') {
+        if (order.status === 'pending' || order.status === 'ready_to_ship') {
+          const label = order.status === 'ready_to_ship' ? 'Ready to ship' : 'Pending';
           agentNote = diffDays !== null && diffDays >= 2
             ? `⚠ Pending for ${diffDays} day(s) — DELAYED`
-            : `Pending${diffDays !== null ? ` for ${diffDays} day(s)` : ''}`;
+            : `${label}${diffDays !== null ? ` for ${diffDays} day(s)` : ''}`;
         } else if (order.status === 'shipped') {
           agentNote = 'In transit';
         }
@@ -128,7 +132,7 @@ async function execute({ status, limit = 20 }) {
           product:   order.product_name,
           status:    order.status,
           awb:       order.awb || 'N/A',
-          created_at: order.created_at,
+          created_at: order.order_date || order.created_at,
           days_old:  diffDays,
           agent_note: agentNote,
         });

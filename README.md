@@ -6,8 +6,8 @@ AI-agent operations dashboard for Logical Mind Education. Talks to you in plain 
 
 ```bash
 # 1. Copy env template and fill in your keys
-copy .env.example .env
-# (edit .env with your real keys — see .env.example)
+cp .env.example .env
+# (edit .env with your real keys)
 
 # 2. Install dependencies
 npm install
@@ -18,10 +18,10 @@ npm run dev
 # 4. Open http://localhost:3000
 ```
 
-## What works now (Phase 1 + 2)
+## What works now (Phase 1, 2, & 3)
 
 ### Phase 1 — Agent & Tasks
-- ✅ AI Agent chat powered by **Gemini 2.5 Flash**
+- ✅ AI Agent chat powered by **Groq (Llama-3.3-70b)**
 - ✅ `assign_task` — "Add a task for me to call printer tomorrow"
 - ✅ `list_tasks`  — "What are my pending tasks?"
 - ✅ `complete_task` — "Mark the printer task as done"
@@ -36,7 +36,15 @@ npm run dev
 - ✅ Orders dashboard with filter by status, Ship & Track buttons
 - ✅ Home dashboard shows today's orders + delayed count
 - ✅ Shiprocket webhook auto-updates order status + Telegram alert on delivery
-- ✅ GitHub Actions scraper polls SmartBiz every 10 min
+- ✅ GitHub Actions scraper polls SmartBiz every 10 min (robust OTP challenge handling)
+- ✅ Order Poller sends real-time alerts to "Channel rings" WhatsApp group
+
+### Phase 3 — WhatsApp Broadcasting
+- ✅ `broadcast_whatsapp` — queue a message to broadcast to 42+ WhatsApp groups
+- ✅ **Rich Media Support** — Attach public Image/PDF URLs to broadcasts
+- ✅ Dashboard UI to compose broadcasts (text + image/PDF) and approve/delete queue
+- ✅ Local `whatsapp-helper` script safely loops through groups mimicking human behavior
+- ✅ Auto-forwards Telegram messages directly into the WhatsApp queue
 
 ## Required environment variables
 
@@ -44,7 +52,7 @@ npm run dev
 |---|---|
 | `SUPABASE_URL` | Supabase project → Settings → API |
 | `SUPABASE_SERVICE_KEY` | Supabase project → Settings → API → service_role key |
-| `GEMINI_API_KEY` | https://ai.google.dev |
+| `GROQ_API_KEY` | https://console.groq.com/ |
 | `TELEGRAM_BOT_TOKEN` | @BotFather on Telegram |
 | `TELEGRAM_CHAT_ID` | Your Telegram group/chat ID |
 | `SHIPROCKET_EMAIL` | Your Shiprocket login email |
@@ -52,6 +60,8 @@ npm run dev
 | `SMARTBIZ_EMAIL` | Your Amazon SmartBiz login email |
 | `SMARTBIZ_PASSWORD` | Your Amazon SmartBiz login password |
 | `DASHBOARD_SECRET` | Any random strong string (shared with your teammate) |
+| `WHATSAPP_GROUP_CHANNEL_RINGS_NAME` | Exact name of your WhatsApp group for order alerts (e.g. "Channel rings...👍") |
+| `APP_URL` | e.g. `https://logicalmind-ops.onrender.com` (for webhooks) |
 
 ## GitHub Secrets (for the scraper to run in Actions)
 
@@ -63,7 +73,7 @@ Add these in your repo → Settings → Secrets → Actions:
 
 ## Supabase setup
 
-1. Run `supabase_schema.sql` in your Supabase SQL editor (new project, not the PDF store)
+1. Run `supabase_schema.sql` and `supabase_broadcasts.sql` in your Supabase SQL editor.
 2. After running, manually add your book SKUs to the `products` table:
 
 ```sql
@@ -95,6 +105,6 @@ Events to enable: Shipment Delivered, Shipment Cancelled, Out for Delivery
 |-------|---------|--------|
 | 1 | Agent + tasks + Telegram | ✅ Live |
 | 2 | Amazon SmartBiz → Shiprocket orders | ✅ Live |
-| 3 | WhatsApp 43-group fan-out | 🔜 Next |
-| 4 | Finance & monthly cycle | 🔜 |
+| 3 | WhatsApp 43-group fan-out (Text+Media) | ✅ Live |
+| 4 | Finance & monthly cycle | 🔜 Next |
 | 5 | App notifications + marketing | 🔜 |

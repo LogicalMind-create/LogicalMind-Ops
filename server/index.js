@@ -68,11 +68,15 @@ async function registerTelegramWebhook() {
   if (!token || !appUrl) return;
 
   const webhookUrl = `${appUrl.replace(/\/$/, '')}/webhooks/telegram`;
+  const body = { url: webhookUrl, allowed_updates: ['message'] };
+  if (process.env.TELEGRAM_WEBHOOK_SECRET) {
+    body.secret_token = process.env.TELEGRAM_WEBHOOK_SECRET;
+  }
   try {
     const res = await fetch(`https://api.telegram.org/bot${token}/setWebhook`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ url: webhookUrl, allowed_updates: ['message'] }),
+      body: JSON.stringify(body),
     });
     const data = await res.json();
     if (data.ok) {

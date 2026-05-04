@@ -3,70 +3,96 @@ const express = require('express');
 const router = express.Router();
 const supabase = require('../lib/supabase');
 
-// GET /api/orders — list orders with delay flags
+const ACTIVE_SHIPMENT_STATUSES = ['pending', 'ready_to_ship'];
+
+function getOrderAgeDate(order) {
+  return order.order_date || order.created_at || order.scraped_at;
+}
+
+function getAgeDays(order, now = Date.now()) {
+  const ageDate = getOrderAgeDate(order);
+  const parsed = new Date(ageDate).getTime();
+  if (!Number.isFinite(parsed)) return null;
+  return Math.max(0, Math.floor((now - parsed) / 86_400_000));
+}
+
+// GET /api/orders - list orders with delay flags
 router.get('/', async (req, res) => {
   const { status, limit = 50 } = req.query;
 
   let query = supabase
     .from('orders')
     .select('*')
+    .order('order_date', { ascending: false, nullsFirst: false })
     .order('created_at', { ascending: false })
     .limit(Number(limit));
 
   if (status && status !== 'all') {
-    query = query.eq('status', status);
+    if (status === 'pending') {
+      query = query.in('status', ACTIVE_SHIPMENT_STATUSES);
+    } else {
+      query = query.eq('status', status);
+    }
   }
 
   const { data, error } = await query;
   if (error) return res.status(500).json({ error: error.message });
 
   const now = Date.now();
-  const orders = (data || []).map((o) => {
-    const ageMs  = now - new Date(o.created_at).getTime();
-    const ageDays = Math.floor(ageMs / 86_400_000);
+  const orders = (data || []).map((order) => {
+    const ageDays = getAgeDays(order, now);
+    const isActionable = ACTIVE_SHIPMENT_STATUSES.includes(order.status);
 
     let delay_flag = null;
-    if (o.status === 'pending' && ageDays >= 2) {
-      delay_flag = `Waiting ${ageDays} day${ageDays !== 1 ? 's' : ''} — needs action`;
-    } else if (o.status === 'pending' && ageDays === 1) {
-      delay_flag = `Waiting 1 day`;
+    if (isActionable && ageDays >= 2) {
+      delay_flag = `Waiting ${ageDays} day${ageDays !== 1 ? 's' : ''} - needs action`;
+    } else if (isActionable && ageDays === 1) {
+      delay_flag = 'Waiting 1 day';
     }
 
-    return { ...o, age_days: ageDays, delay_flag };
+    return {
+      ...order,
+      age_days: ageDays,
+      age_source: order.order_date ? 'order_date' : 'created_at',
+      delay_flag,
+    };
   });
 
   res.json(orders);
 });
 
-// GET /api/orders/stats — for the home dashboard cards
+// GET /api/orders/stats - for the home dashboard cards
 router.get('/stats', async (req, res) => {
-  // Orders scraped today
   const today = new Date();
   today.setHours(0, 0, 0, 0);
 
-  const { data: todayOrders } = await supabase
+  const { data: todayOrders, error: todayErr } = await supabase
     .from('orders')
     .select('id, status')
     .gte('scraped_at', today.toISOString());
+  if (todayErr) return res.status(500).json({ error: todayErr.message });
 
-  // Total pending that need shipping
-  const { count: pendingCount } = await supabase
+  const { count: pendingCount, error: pendingErr } = await supabase
     .from('orders')
     .select('*', { count: 'exact', head: true })
-    .eq('status', 'pending');
+    .in('status', ACTIVE_SHIPMENT_STATUSES);
+  if (pendingErr) return res.status(500).json({ error: pendingErr.message });
 
-  // Orders delayed ≥ 2 days
-  const twoDaysAgo = new Date(Date.now() - 2 * 86_400_000).toISOString();
-  const { count: delayedCount } = await supabase
+  const { data: activeOrders, error: activeErr } = await supabase
     .from('orders')
-    .select('*', { count: 'exact', head: true })
-    .eq('status', 'pending')
-    .lt('created_at', twoDaysAgo);
+    .select('id, order_date, created_at, scraped_at, status')
+    .in('status', ACTIVE_SHIPMENT_STATUSES);
+  if (activeErr) return res.status(500).json({ error: activeErr.message });
+
+  const delayedCount = (activeOrders || []).filter((order) => {
+    const ageDays = getAgeDays(order);
+    return ageDays !== null && ageDays >= 2;
+  }).length;
 
   res.json({
     today_count: todayOrders?.length ?? 0,
     pending_count: pendingCount ?? 0,
-    delayed_count: delayedCount ?? 0,
+    delayed_count: delayedCount,
   });
 });
 

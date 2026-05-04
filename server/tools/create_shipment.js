@@ -4,7 +4,7 @@ const telegram = require('../lib/telegram');
 
 const declaration = {
   name: 'create_shipment',
-  description: 'Creates a shipment via Shiprocket for a pending order and updates the AWB in the database. Requires the order ID from list_orders.',
+  description: 'Creates a shipment via Shiprocket for a pending or ready-to-ship order and updates the AWB in the database. Requires the order ID from list_orders.',
   parameters: {
     type: 'OBJECT',
     properties: {
@@ -18,6 +18,8 @@ const declaration = {
 };
 
 async function execute({ order_id }) {
+  const shippableStatuses = ['pending', 'ready_to_ship'];
+
   // 1. Fetch order details
   const { data: order, error: orderErr } = await supabase
     .from('orders')
@@ -29,7 +31,7 @@ async function execute({ order_id }) {
     throw new Error(`Order not found: ${orderErr?.message || 'Unknown ID'}`);
   }
 
-  if (order.status !== 'pending') {
+  if (!shippableStatuses.includes(order.status)) {
     return { error: `Order is already in '${order.status}' status. Cannot ship.` };
   }
 
@@ -44,13 +46,19 @@ async function execute({ order_id }) {
     throw new Error(`Product SKU '${order.sku}' not found in products table. Cannot calculate shipping dimensions.`);
   }
 
+  const missingDimensions = ['weight_g', 'length_cm', 'breadth_cm', 'height_cm']
+    .filter((field) => product[field] === null || product[field] === undefined || Number(product[field]) <= 0);
+  if (missingDimensions.length > 0) {
+    throw new Error(`Product SKU '${order.sku}' is missing shipping data: ${missingDimensions.join(', ')}.`);
+  }
+
   // 3. Prepare Shiprocket Payload
   // Note: For a complete integration, you'd need full customer address details which the scraper should collect.
   // Assuming the scraper puts address in a JSON column or we mock it for now.
   // In a real scenario, these fields MUST come from the order data.
   const payload = {
     order_id: order.external_id,
-    order_date: new Date(order.created_at).toISOString().split('T')[0],
+    order_date: new Date(order.order_date || order.created_at).toISOString().split('T')[0],
     pickup_location: "Primary", // Must match your Shiprocket pickup location name
     channel_id: "",
     comment: "Created by LogicalMind Ops",
@@ -91,21 +99,30 @@ async function execute({ order_id }) {
   try {
     // 4. Create Order in Shiprocket
     const srOrder = await shiprocket.createOrder(payload);
+    const shipmentId = srOrder?.shipment_id || srOrder?.data?.shipment_id || srOrder?.response?.data?.shipment_id;
+    if (!shipmentId) {
+      throw new Error('Shiprocket did not return a shipment ID.');
+    }
     
     // 5. Generate AWB
-    const srAwb = await shiprocket.generateAWB(srOrder.shipment_id);
+    const srAwb = await shiprocket.generateAWB(shipmentId);
+    const awbData = srAwb?.response?.data || srAwb?.data || srAwb;
+    const awbCode = awbData?.awb_code;
+    if (!awbCode) {
+      throw new Error('Shiprocket did not return an AWB code.');
+    }
     
     // 6. Update Database
     await supabase
       .from('orders')
       .update({
         status: 'shipped',
-        awb: srAwb.response.data.awb_code,
+        awb: awbCode,
         shipped_at: new Date().toISOString()
       })
       .eq('id', order_id);
 
-    const successMessage = `Successfully shipped order ${order.external_id}. AWB: ${srAwb.response.data.awb_code}`;
+    const successMessage = `Successfully shipped order ${order.external_id}. AWB: ${awbCode}`;
     
     // Notify team
     await telegram.sendMessage(`📦 ${successMessage}`);
@@ -113,8 +130,8 @@ async function execute({ order_id }) {
     return { 
       success: true, 
       message: successMessage,
-      awb: srAwb.response.data.awb_code,
-      courier: srAwb.response.data.courier_name
+      awb: awbCode,
+      courier: awbData?.courier_name || 'N/A'
     };
   } catch (err) {
     throw new Error(`Shiprocket integration error: ${err.message}`);

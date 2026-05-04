@@ -36,7 +36,12 @@ function toast(msg, type = 'info') {
   const el = document.createElement('div');
   el.className = `toast ${type}`;
   const icons = { success: '✅', error: '❌', info: 'ℹ️' };
-  el.innerHTML = `<span>${icons[type] || ''}</span><span>${msg}</span>`;
+  const icon = document.createElement('span');
+  icon.textContent = icons[type] || '';
+  const text = document.createElement('span');
+  text.textContent = msg;
+  el.appendChild(icon);
+  el.appendChild(text);
   container.appendChild(el);
   setTimeout(() => { el.style.opacity = '0'; el.style.transform = 'translateX(20px)';
     el.style.transition = 'all .3s'; setTimeout(() => el.remove(), 300); }, 3500);
@@ -83,6 +88,8 @@ async function loadStats() {
           if (badge) { badge.style.display = ''; badge.textContent = stats.delayed_count; }
         } else {
           delayedEl.textContent = 'All on track';
+          const badge = document.getElementById('order-badge');
+          if (badge) { badge.style.display = 'none'; badge.textContent = '!'; }
         }
       }
     }
@@ -412,6 +419,7 @@ function renderOrders(orders) {
     const isDelayed = !!o.delay_flag;
     const statusColor = {
       pending:   isDelayed ? '#f59e0b' : '#6366f1',
+      ready_to_ship: '#f59e0b',
       shipped:   '#22c55e',
       delivered: '#10b981',
       cancelled: '#ef4444',
@@ -441,14 +449,14 @@ function renderOrders(orders) {
           </div>
         </div>
         <div style="display:flex;flex-direction:column;gap:6px;align-items:flex-end">
-          ${o.status === 'pending' ? `
+          ${['pending', 'ready_to_ship'].includes(o.status) ? `
             <button class="btn btn-primary" style="font-size:11px;padding:4px 10px"
-              onclick="shipViaAgent('${o.id}', '${escHtml(o.external_id || o.id.slice(0,8))}')">
+              onclick="shipViaAgent('${escJs(o.id)}', '${escJs(o.external_id || o.id.slice(0,8))}')">
               🚚 Ship via Agent
             </button>` : ''}
           ${(o.awb && o.awb !== 'N/A') ? `
             <button class="btn btn-ghost" style="font-size:11px;padding:4px 10px"
-              onclick="trackViaAgent('${escHtml(o.awb)}')">
+              onclick="trackViaAgent('${escJs(o.awb)}')">
               🔍 Track
             </button>` : ''}
         </div>
@@ -486,7 +494,11 @@ function trackViaAgent(awb) {
 
 // ── Helpers ──────────────────────────────────────────────────────
 function escHtml(str) {
-  return String(str || '').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+  return String(str || '').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;').replace(/'/g,'&#39;');
+}
+
+function escJs(str) {
+  return String(str || '').replace(/\\/g, '\\\\').replace(/'/g, "\\'").replace(/\r?\n/g, ' ');
 }
 
 // ═════════════════════════════════════════════════════════════
