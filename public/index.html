@@ -47,12 +47,13 @@
       <span class="icon">📢</span> WhatsApp
       <span class="nav-badge" id="broadcast-badge" style="display:none">0</span>
     </button>
+    <button id="nav-notifications" class="nav-item" onclick="navigate('notifications')">
+      <span class="icon">🔔</span> Notifications
+      <span class="nav-badge" id="notif-badge" style="display:none">0</span>
+    </button>
     <span class="nav-label">Coming Soon</span>
     <button class="nav-item" style="opacity:.4;cursor:not-allowed" disabled>
       <span class="icon">💰</span> Finance
-    </button>
-    <button class="nav-item" style="opacity:.4;cursor:not-allowed" disabled>
-      <span class="icon">🔔</span> Notifications
     </button>
   </nav>
 
@@ -87,8 +88,18 @@
         </div>
         <div class="stat-card" onclick="navigate('broadcasts')" style="cursor:pointer">
           <div class="stat-label">WA Groups</div>
-          <div class="stat-value">64</div>
+          <div class="stat-value">42</div>
           <div class="stat-sub" id="stat-broadcasts">click to broadcast</div>
+        </div>
+        <div class="stat-card" onclick="navigate('notifications')" style="cursor:pointer">
+          <div class="stat-label">Push Drafts</div>
+          <div class="stat-value" id="stat-pending-notifs">—</div>
+          <div class="stat-sub">awaiting approval</div>
+        </div>
+        <div class="stat-card" onclick="navigate('notifications')" style="cursor:pointer">
+          <div class="stat-label">Pushes Sent</div>
+          <div class="stat-value" id="stat-sent-notifs">—</div>
+          <div class="stat-sub">sent today</div>
         </div>
       </div>
 
@@ -121,8 +132,8 @@
           </div>
           <div class="welcome-card" onclick="navigate('broadcasts')">
             <div class="wc-icon">💬</div>
-            <div class="wc-title">Broadcast to 64 Groups</div>
-            <div class="wc-desc">Agent drafts → you approve → WhatsApp Helper safely fans out to all 64 groups in ~10–15 min.</div>
+            <div class="wc-title">Broadcast to 42 Groups</div>
+            <div class="wc-desc">Agent drafts → you approve → WhatsApp Helper safely fans out to all 42 groups in ~10 min.</div>
             <span class="wc-phase">Live — Phase 3</span>
           </div>
           <div class="welcome-card">
@@ -331,7 +342,7 @@
         <div style="display:flex;flex-direction:column;gap:10px">
           <textarea id="broadcast-compose" class="chat-input" rows="3"
             style="max-height:none;resize:vertical"
-            placeholder="Type your message to all 64 WhatsApp groups (optional when attaching media)…"></textarea>
+            placeholder="Type your message to all 42 WhatsApp groups…"></textarea>
 
           <!-- Media attachment (optional) -->
           <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">
@@ -346,17 +357,8 @@
           </div>
 
           <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">
-            <input id="broadcast-media-file" class="form-input" type="file"
-              accept="image/*,application/pdf"
-              style="flex:1;min-width:200px"
-            />
-            <span id="broadcast-media-file-name" style="font-size:12px;color:var(--muted);min-width:160px">
-              Select image or PDF from device gallery</span>
-          </div>
-
-          <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">
             <select id="broadcast-filter" class="form-input" style="width:160px">
-              <option value="all">All 64 groups</option>
+              <option value="all">All 42 groups</option>
               <option value="dsc">DSC groups only</option>
               <option value="logical mind">Logical Mind groups only</option>
               <option value="sgt">SGT groups only</option>
@@ -373,7 +375,7 @@
           ✅ Helper is running on your PC — polling every 30 seconds.<br>
           Messages only send after you click <strong>Approve &amp; Send</strong>.
           The helper sends to each group with a 5–15 second human-like delay between groups.
-          Total time for 64 groups: ~10–15 minutes.
+          Total time for 42 groups: ~8–12 minutes.
         </p>
       </div>
 
@@ -385,6 +387,61 @@
         </div>
       </div>
 
+    </section>
+
+    <!-- ══════════════════════════════════════════════════════
+         PAGE: NOTIFICATIONS (Phase 4)
+    ═══════════════════════════════════════════════════════════ -->
+    <section id="page-notifications" class="page">
+      <div class="header">
+        <h1 class="title">🔔 TeachX App Push Notifications</h1>
+        <p style="color:var(--muted);font-size:14px;margin-top:4px">
+          Auto-schedule and send push notifications to 8,187+ Android app users.
+        </p>
+      </div>
+
+      <div class="card" style="margin-bottom:24px">
+        <div style="padding:16px;border-bottom:1px solid #1f1f1f">
+          <h3 style="margin:0 0 12px 0;font-size:14px;color:#fff">Draft New Push Notification</h3>
+          <div style="display:flex;flex-direction:column;gap:12px">
+            <input type="text" id="notif-title" class="form-input" placeholder="Title (max 60 chars)" maxlength="60" />
+            <textarea id="notif-body" class="form-input" rows="3" placeholder="Message body..."></textarea>
+            
+            <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">
+              <select id="notif-target" class="form-input" style="width:140px">
+                <option value="all_users">All Users</option>
+              </select>
+              <select id="notif-category" class="form-input" style="width:160px">
+                <option value="marketing">Marketing</option>
+                <option value="reminder">Reminder</option>
+                <option value="reengagement">Re-engagement</option>
+                <option value="announcement">Announcement</option>
+              </select>
+              <input type="datetime-local" id="notif-schedule" class="form-input" style="width:180px" title="Schedule for later (Optional)" />
+              <button class="btn btn-primary" onclick="draftNotification()">+ Queue Draft</button>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Tabs -->
+      <div style="display:flex;gap:16px;margin-bottom:16px;border-bottom:1px solid #1f1f1f;padding-bottom:12px">
+        <button class="btn" style="background:#222;color:#fff;border-color:#333" id="tab-notif-queue" onclick="switchNotifTab('queue')">Approval Queue</button>
+        <button class="btn btn-outline" id="tab-notif-campaigns" onclick="switchNotifTab('campaigns')">Campaigns</button>
+        <button class="btn btn-outline" id="tab-notif-history" onclick="switchNotifTab('history')">History</button>
+      </div>
+
+      <div id="notif-list-queue">
+        <div class="empty-state"><div class="emoji">⏳</div><p>Loading queue…</p></div>
+      </div>
+      
+      <div id="notif-list-campaigns" style="display:none">
+        <div class="empty-state"><div class="emoji">📅</div><p>Loading campaigns…</p></div>
+      </div>
+      
+      <div id="notif-list-history" style="display:none">
+        <div class="empty-state"><div class="emoji">🗄️</div><p>Loading history…</p></div>
+      </div>
     </section>
 
   </main>

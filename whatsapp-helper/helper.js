@@ -103,7 +103,9 @@ function loadGroups() {
     console.error('[Helper] Run: node discover-groups.js to auto-discover your groups.');
     process.exit(1);
   }
-  return JSON.parse(fs.readFileSync(GROUPS_FILE, 'utf-8'));
+  // Strip UTF-8 BOM if present (added by Windows editors like Notepad)
+  const raw = fs.readFileSync(GROUPS_FILE, 'utf-8').replace(/^﻿/, '');
+  return JSON.parse(raw);
 }
 
 function shuffle(arr) {
@@ -171,13 +173,18 @@ async function focusSearchWithShortcut(page) {
 }
 
 async function resolveSearchBox(page) {
+  // WhatsApp Business on Web uses a plain <input>, not a contenteditable div.
+  // Regular WhatsApp Web uses contenteditable. Try both, input selectors first.
   const candidates = [
+    page.locator('input[data-tab="3"]'),
+    page.locator('input[aria-label*="Search" i]'),
+    page.locator('input[placeholder*="Search" i]'),
+    page.locator('#side input[type="text"]'),
+    // Legacy / regular WhatsApp Web (contenteditable div)
     page.locator('#side div[role="textbox"][contenteditable="true"]'),
-    page.locator('#side div[contenteditable="true"]'),
     page.locator('div[contenteditable="true"][data-tab="3"]'),
     page.locator('div[contenteditable="true"][aria-label*="Search" i]'),
-    page.locator('div[contenteditable="true"][title*="Search" i]'),
-    page.locator('input[type="text"][title*="Search" i]'),
+    page.locator('#side div[contenteditable="true"]'),
   ];
   for (const loc of candidates) {
     const first = loc.first();
@@ -186,16 +193,6 @@ async function resolveSearchBox(page) {
 
   const focusedFromShortcut = await focusSearchWithShortcut(page);
   if (focusedFromShortcut) return focusedFromShortcut;
-
-  const broadFallbacks = [
-    page.locator('#side div[contenteditable="true"]'),
-    page.locator('div[role="textbox"][contenteditable="true"]'),
-    page.locator('div[contenteditable="true"]'),
-  ];
-  for (const loc of broadFallbacks) {
-    const first = loc.first();
-    if ((await first.count()) > 0 && (await first.isVisible().catch(() => false))) return first;
-  }
 
   await debugDump(page, 'search-box-missing');
   throw new Error('Search box not found');
@@ -229,6 +226,10 @@ async function clearSearch(page) {
     await sleep(rand(40, 100));
     await page.keyboard.press('Backspace');
     await sleep(rand(80, 200));
+    // Escape exits WhatsApp Business's search mode (plain <input> stays in search
+    // mode until dismissed, keeping the chat list in filtered state)
+    await page.keyboard.press('Escape');
+    await sleep(rand(150, 300));
   } catch (_) {
     /* ignore */
   }
@@ -253,44 +254,55 @@ function matchesGroupName(titleAttr, rowText, groupName) {
   return false;
 }
 
+function findChannelRingsGroupName(groups) {
+  const candidate = groups.find((group) => {
+    const normalized = norm(group);
+    return normalized.includes('channel') && normalized.includes('rings');
+  });
+  return candidate || '';
+}
+
 async function openGroup(page, groupName) {
   await clearSearch(page);
   const search = await resolveSearchBox(page);
   await humanTypeIntoLocator(page, search, groupName);
-  await sleep(rand(1000, 2000));
 
-  const rowSelectors = '#pane-side div[role="listitem"], #side div[role="listitem"], [data-testid="cell-frame-container"]';
-  const rows = page.locator(rowSelectors);
-  const count = await rows.count();
+  // Wait for WhatsApp to filter the search results before scanning rows.
+  // Strategy: wait until a cell-frame-title span appears whose text matches
+  // our group name. Timeout 8s — if nothing appears, fall through to manual scan.
+  const normName = norm(groupName);
   let target = null;
 
-  for (let i = 0; i < count; i++) {
-    const row = rows.nth(i);
-    if (!(await row.isVisible().catch(() => false))) continue;
-    let titleAttr = '';
-    const titleEl = row.locator('span[title]').first();
-    if ((await titleEl.count()) > 0) {
-      titleAttr = (await titleEl.getAttribute('title').catch(() => '')) || '';
-    }
-    const rowText = (await row.innerText().catch(() => '')) || '';
-    if (matchesGroupName(titleAttr, rowText, groupName)) {
-      target = titleEl && (await titleEl.count()) > 0 ? titleEl : row;
-      break;
+  try {
+    // Fast path: wait for a visible title span containing the group name
+    const titleSpan = page.locator('span[title]').filter({ hasText: new RegExp(normName.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'i') }).first();
+    await titleSpan.waitFor({ state: 'visible', timeout: 8000 });
+    target = titleSpan;
+    console.log(`  [Helper] Fast-matched: "${groupName}"`);
+  } catch (_) {
+    // Slow path: manual scan across all visible rows
+    await sleep(rand(500, 1000));
+    const rowSelectors = '[data-testid="cell-frame-container"], #pane-side div[role="listitem"], #side div[role="listitem"]';
+    const rows = page.locator(rowSelectors);
+    const count = await rows.count();
+
+    for (let i = 0; i < count; i++) {
+      const row = rows.nth(i);
+      if (!(await row.isVisible().catch(() => false))) continue;
+      const titleEl = row.locator('span[title]').first();
+      const titleAttr = (await titleEl.getAttribute('title').catch(() => '')) || '';
+      const rowText = (await row.innerText().catch(() => '')) || '';
+      if (matchesGroupName(titleAttr, rowText, groupName)) {
+        target = titleEl && (await titleEl.count()) > 0 ? titleEl : row;
+        break;
+      }
     }
   }
 
+  // Final fallback: exact title attribute match
   if (!target) {
-    const exactLegacy = page.locator(`span[title="${groupName.replace(/"/g, '\\"')}"]`).first();
-    if ((await exactLegacy.count()) > 0 && (await exactLegacy.isVisible().catch(() => false))) {
-      target = exactLegacy;
-    }
-  }
-
-  if (!target) {
-    const fallback = page.locator('[data-testid="cell-frame-title"]').filter({ hasText: groupName }).first();
-    if ((await fallback.count()) > 0 && (await fallback.isVisible().catch(() => false))) {
-      target = fallback;
-    }
+    const exact = page.locator(`span[title="${groupName.replace(/"/g, '\\"')}"]`).first();
+    if ((await exact.count()) > 0 && (await exact.isVisible().catch(() => false))) target = exact;
   }
 
   if (!target || (await target.count()) === 0) {
@@ -332,7 +344,20 @@ async function sendTextToGroup(page, groupName, message) {
 
   const compose = await resolveComposeBox(page);
   await humanTypeIntoLocator(page, compose, message);
-  await page.keyboard.press('Enter');
+
+  // Try clicking the send button first (more reliable in WhatsApp Business on Web).
+  // Fall back to Enter if the button isn't visible.
+  const sendBtn = page
+    .locator(
+      'span[data-icon="send"], span[data-icon="wds-ic-send-filled"], [data-testid="send"], button[aria-label="Send"], button[aria-label="send"], div[role="button"][aria-label="Send"]'
+    )
+    .first();
+  if (await sendBtn.isVisible({ timeout: 3000 }).catch(() => false)) {
+    await humanClick(page, sendBtn);
+  } else {
+    await page.keyboard.press('Enter');
+  }
+
   await sleep(rand(400, 800));
   await clearSearch(page);
   return true;
@@ -505,14 +530,21 @@ async function runBroadcast(broadcast) {
     const filter = broadcast.group_filter.toLowerCase();
 
     if (filter === 'channel_rings') {
-      if (!WHATSAPP_GROUP_CHANNEL_RINGS_NAME) {
-        console.error('[Helper] WHATSAPP_GROUP_CHANNEL_RINGS_NAME not set in .env - cannot send to Channel Rings');
-        console.error('[Helper] Run discover-groups.js, find "Channel Rings", and add it to .env');
-        await markBroadcastFailed(broadcast.id, 'Channel Rings group name missing');
-        return;
+      if (WHATSAPP_GROUP_CHANNEL_RINGS_NAME) {
+        groups = [WHATSAPP_GROUP_CHANNEL_RINGS_NAME];
+        console.log('[Helper] Special filter "channel_rings" -> sending only to Channel Rings team group');
+      } else {
+        const inferred = findChannelRingsGroupName(groups);
+        if (inferred) {
+          groups = [inferred];
+          console.log('[Helper] Special filter "channel_rings" -> inferred Channel Rings group from groups.json:', inferred);
+        } else {
+          console.error('[Helper] WHATSAPP_GROUP_CHANNEL_RINGS_NAME not set in .env and no channel rings group found in groups.json');
+          console.error('[Helper] Run discover-groups.js and set WHATSAPP_GROUP_CHANNEL_RINGS_NAME in your .env');
+          await markBroadcastFailed(broadcast.id, 'Channel Rings group name missing');
+          return;
+        }
       }
-      groups = [WHATSAPP_GROUP_CHANNEL_RINGS_NAME];
-      console.log('[Helper] Special filter "channel_rings" -> sending only to Channel Rings team group');
     } else {
       groups = groups.filter((group) => group.toLowerCase().includes(filter));
       console.log(`[Helper] Filter "${broadcast.group_filter}" matched ${groups.length} groups`);

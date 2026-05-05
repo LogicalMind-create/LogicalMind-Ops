@@ -26,6 +26,7 @@ function navigate(page) {
   if (page === 'home')       loadStats();
   if (page === 'orders')     loadOrders();
   if (page === 'broadcasts') loadBroadcasts();
+  if (page === 'notifications') switchNotifTab('queue');
 }
 
 // ── Toast ────────────────────────────────────────────────────────
@@ -45,64 +46,6 @@ function toast(msg, type = 'info') {
     el.style.transition = 'all .3s'; setTimeout(() => el.remove(), 300); }, 3500);
 }
 
-async function uploadBroadcastMediaFile(file) {
-  if (!file) throw new Error('No file selected');
-  const allowedTypes = ['application/pdf', 'image/jpeg', 'image/jpg', 'image/png', 'image/gif', 'image/webp'];
-  if (!allowedTypes.includes(file.type)) {
-    throw new Error('Only image and PDF uploads are supported');
-  }
-
-  const dataUrl = await new Promise((resolve, reject) => {
-    const reader = new FileReader();
-    reader.onload = () => resolve(reader.result);
-    reader.onerror = () => reject(new Error('Failed to read file'));
-    reader.readAsDataURL(file);
-  });
-
-  const res = await apiFetch('/api/broadcasts/upload-media', {
-    method: 'POST',
-    body: JSON.stringify({ filename: file.name, content_type: file.type, data: dataUrl }),
-  });
-  if (!res.ok) {
-    const err = await res.json().catch(() => ({}));
-    throw new Error(err.error || 'Media upload failed');
-  }
-  return res.json();
-}
-
-function setBroadcastMediaState(mediaUrl, mediaType, fileName) {
-  const urlInput = document.getElementById('broadcast-media-url');
-  const typeSelect = document.getElementById('broadcast-media-type');
-  const fileNameLabel = document.getElementById('broadcast-media-file-name');
-  if (urlInput) urlInput.value = mediaUrl || '';
-  if (typeSelect) typeSelect.value = mediaType || '';
-  if (fileNameLabel) fileNameLabel.textContent = fileName || 'Select image or PDF from device gallery';
-}
-
-function setupBroadcastMediaUploader() {
-  const fileInput = document.getElementById('broadcast-media-file');
-  if (!fileInput) return;
-
-  fileInput.addEventListener('change', async () => {
-    const file = fileInput.files?.[0];
-    if (!file) {
-      setBroadcastMediaState('', '', 'Select image or PDF from device gallery');
-      return;
-    }
-
-    setBroadcastMediaState('', '', `Uploading ${file.name}...`);
-    try {
-      const { media_url, media_type } = await uploadBroadcastMediaFile(file);
-      setBroadcastMediaState(media_url, media_type, file.name);
-      toast('File uploaded successfully. Ready to queue broadcast.', 'success');
-    } catch (err) {
-      setBroadcastMediaState('', '', 'Select image or PDF from device gallery');
-      fileInput.value = '';
-      toast(err.message || 'Upload failed', 'error');
-    }
-  });
-}
-
 // ── Clock ────────────────────────────────────────────────────────
 function updateClock() {
   const el = document.getElementById('topbar-time');
@@ -112,7 +55,6 @@ function updateClock() {
 }
 setInterval(updateClock, 30000);
 updateClock();
-setupBroadcastMediaUploader();
 
 // ── Stats (home page) ────────────────────────────────────────────
 async function loadStats() {
@@ -148,6 +90,24 @@ async function loadStats() {
           const badge = document.getElementById('order-badge');
           if (badge) { badge.style.display = 'none'; badge.textContent = '!'; }
         }
+      }
+    }
+  } catch (_) {}
+
+  // Notification stats
+  try {
+    const res = await apiFetch('/api/notifications/stats');
+    if (res.ok) {
+      const stats = await res.json();
+      const pendingEl = document.getElementById('stat-pending-notifs');
+      const sentEl = document.getElementById('stat-sent-notifs');
+      if (pendingEl) pendingEl.textContent = stats.pending;
+      if (sentEl) sentEl.textContent = stats.sentToday;
+
+      const badge = document.getElementById('notif-badge');
+      if (badge) {
+        badge.style.display = stats.pending > 0 ? '' : 'none';
+        badge.textContent = stats.pending;
       }
     }
   } catch (_) {}
@@ -696,9 +656,7 @@ async function createBroadcast() {
   const mediaUrl  = document.getElementById('broadcast-media-url')?.value?.trim() || null;
   const mediaType = document.getElementById('broadcast-media-type')?.value || null;
 
-  if (!msg && !mediaUrl) {
-    toast('Please type a message or attach an image/PDF', 'error'); return;
-  }
+  if (!msg) { toast('Please type a message first', 'error'); return; }
 
   // Validate media
   if (mediaUrl && !mediaType) {
@@ -722,9 +680,6 @@ async function createBroadcast() {
     document.getElementById('broadcast-compose').value = '';
     if (document.getElementById('broadcast-media-url')) document.getElementById('broadcast-media-url').value = '';
     if (document.getElementById('broadcast-media-type')) document.getElementById('broadcast-media-type').value = '';
-    const fileInput = document.getElementById('broadcast-media-file');
-    if (fileInput) fileInput.value = '';
-    setBroadcastMediaState('', '', 'Select image or PDF from device gallery');
     const mediaNote = mediaUrl ? ` with ${mediaType} attachment` : '';
     toast(`✅ Added to queue${mediaNote} — review and approve below`, 'success');
     loadBroadcasts();
@@ -771,6 +726,165 @@ async function retryBroadcast(id) {
     const err = await res.json().catch(() => ({}));
     toast(err.error || 'Retry failed', 'error');
   }
+}
+
+// ═════════════════════════════════════════════════════════════
+// ── NOTIFICATIONS ──────────────────────────────────────────────────
+// ═════════════════════════════════════════════════════════════
+
+let currentNotifTab = 'queue';
+
+function switchNotifTab(tab) {
+  currentNotifTab = tab;
+  ['queue', 'campaigns', 'history'].forEach(t => {
+    const btn = document.getElementById(`tab-notif-${t}`);
+    const div = document.getElementById(`notif-list-${t}`);
+    if (btn) {
+      btn.style.background = t === tab ? '#222' : 'transparent';
+      btn.style.color = t === tab ? '#fff' : 'inherit';
+    }
+    if (div) div.style.display = t === tab ? 'block' : 'none';
+  });
+  if (tab === 'queue') loadNotifications('pending_approval', 'queue');
+  if (tab === 'history') loadNotifications('all', 'history');
+  if (tab === 'campaigns') loadNotificationCampaigns();
+}
+
+async function loadNotifications(status = 'pending_approval', listId = 'queue') {
+  const list = document.getElementById(`notif-list-${listId}`);
+  if (!list) return;
+  try {
+    const res = await apiFetch(`/api/notifications?status=${status}&limit=50`);
+    const data = await res.json();
+    
+    if (!data || data.length === 0) {
+      list.innerHTML = `<div class="empty-state"><div class="emoji">🔔</div><p>No ${listId === 'queue' ? 'pending approvals' : 'history'} found.</p></div>`;
+      return;
+    }
+    
+    const statusColor = { draft:'#6366f1', pending_approval:'#f59e0b', sending:'#3b82f6', sent:'#22c55e', failed:'#ef4444' };
+    
+    list.innerHTML = data.map(n => {
+      const color = statusColor[n.status] || '#6b7280';
+      const dateStr = new Date(n.created_at).toLocaleString('en-IN', { timeZone:'Asia/Kolkata', dateStyle:'short', timeStyle:'short' });
+      const errBlock = (n.status === 'failed' && n.error_reason) ? `<div style="margin-top:8px;color:#ef4444;font-size:12px">Error: ${escHtml(n.error_reason)}</div>` : '';
+      
+      return `
+        <div class="task-item">
+          <div class="task-body" style="flex:1">
+            <div class="task-title">${escHtml(n.title)}</div>
+            <div style="font-size:13px;color:#ccc;margin:4px 0">${escHtml(n.body)}</div>
+            <div class="task-meta" style="margin-top:6px">
+              <span style="font-size:11px;font-weight:600;padding:2px 8px;border-radius:20px;background:${color}22;color:${color}">${n.status.toUpperCase()}</span>
+              <span>Target: ${escHtml(n.target_type)}</span>
+              <span>Category: ${escHtml(n.category)}</span>
+              ${n.scheduled_for ? `<span>Scheduled: ${new Date(n.scheduled_for).toLocaleString()}</span>` : ''}
+              <span>Created: ${dateStr}</span>
+            </div>
+            ${errBlock}
+          </div>
+          <div style="display:flex;flex-direction:column;gap:6px;align-items:flex-end">
+            ${n.status === 'pending_approval' ? `
+              <button class="btn btn-primary" style="font-size:11px;padding:5px 12px" onclick="approveNotif('${n.id}')">Approve ✅</button>
+              <button class="btn btn-ghost" style="font-size:11px;padding:5px 10px;color:var(--danger)" onclick="rejectNotif('${n.id}')">Reject ❌</button>
+            ` : ''}
+          </div>
+        </div>`;
+    }).join('');
+    
+  } catch (err) {
+    list.innerHTML = '<div class="empty-state"><p>Error loading notifications.</p></div>';
+  }
+}
+
+async function loadNotificationCampaigns() {
+  const list = document.getElementById('notif-list-campaigns');
+  if (!list) return;
+  try {
+    const res = await apiFetch('/api/notification-campaigns');
+    const data = await res.json();
+    
+    if (!data || data.length === 0) {
+      list.innerHTML = '<div class="empty-state"><div class="emoji">📅</div><p>No campaigns set up.</p></div>';
+      return;
+    }
+    
+    list.innerHTML = data.map(c => `
+      <div class="task-item">
+        <div class="task-body" style="flex:1">
+          <div class="task-title">${escHtml(c.name)} <span style="font-size:12px;color:var(--muted)">(${c.is_active ? 'Active' : 'Paused'})</span></div>
+          <div style="font-size:13px;color:#ccc;margin:4px 0">Template: ${escHtml(c.template_title)}</div>
+          <div class="task-meta" style="margin-top:6px">
+            <span style="font-size:11px;font-weight:600;padding:2px 8px;border-radius:20px;background:#3b82f622;color:#3b82f6">Cron: ${escHtml(c.cron_rule)}</span>
+            <span>Target: ${escHtml(c.target_type)}</span>
+            <span>Last run: ${c.last_run_at ? new Date(c.last_run_at).toLocaleString() : 'Never'}</span>
+          </div>
+        </div>
+        <div style="display:flex;flex-direction:column;gap:6px;align-items:flex-end">
+          <button class="btn btn-ghost" style="font-size:11px;padding:5px 10px" onclick="toggleCampaign('${c.id}', ${!c.is_active})">${c.is_active ? 'Pause ⏸' : 'Resume ▶'}</button>
+          <button class="btn btn-ghost" style="font-size:11px;padding:5px 10px;color:var(--danger)" onclick="deleteCampaign('${c.id}')">Delete 🗑</button>
+        </div>
+      </div>
+    `).join('');
+  } catch (err) {
+    list.innerHTML = '<div class="empty-state"><p>Error loading campaigns.</p></div>';
+  }
+}
+
+async function draftNotification() {
+  const title = document.getElementById('notif-title').value.trim();
+  const body = document.getElementById('notif-body').value.trim();
+  const target_type = document.getElementById('notif-target').value;
+  const category = document.getElementById('notif-category').value;
+  const scheduled_for = document.getElementById('notif-schedule').value || null;
+
+  if (!title || !body) { toast('Title and body required', 'error'); return; }
+
+  const payload = { title, body, target_type, category, scheduled_for };
+  const res = await apiFetch('/api/notifications', { method: 'POST', body: JSON.stringify(payload) });
+  if (res.ok) {
+    document.getElementById('notif-title').value = '';
+    document.getElementById('notif-body').value = '';
+    document.getElementById('notif-schedule').value = '';
+    toast('✅ Notification drafted and queued for approval', 'success');
+    if (currentNotifTab === 'queue') loadNotifications('pending_approval', 'queue');
+    loadStats();
+  } else {
+    toast('Failed to draft notification', 'error');
+  }
+}
+
+async function approveNotif(id) {
+  if (!confirm('Approve this notification? It will be sent via TeachX app.')) return;
+  const res = await apiFetch(`/api/notifications/${id}/approve`, { method: 'POST' });
+  if (res.ok) {
+    toast('✅ Approved!', 'success');
+    if (currentNotifTab === 'queue') loadNotifications('pending_approval', 'queue');
+    loadStats();
+  } else {
+    toast('Failed to approve', 'error');
+  }
+}
+
+async function rejectNotif(id) {
+  if (!confirm('Reject and cancel this draft?')) return;
+  const res = await apiFetch(`/api/notifications/${id}/reject`, { method: 'POST' });
+  if (res.ok) {
+    toast('❌ Rejected draft', 'info');
+    if (currentNotifTab === 'queue') loadNotifications('pending_approval', 'queue');
+    loadStats();
+  }
+}
+
+async function toggleCampaign(id, isActive) {
+  const res = await apiFetch(`/api/notification-campaigns/${id}`, { method: 'PATCH', body: JSON.stringify({ is_active: isActive }) });
+  if (res.ok) loadNotificationCampaigns();
+}
+
+async function deleteCampaign(id) {
+  if (!confirm('Delete this campaign?')) return;
+  const res = await apiFetch(`/api/notification-campaigns/${id}`, { method: 'DELETE' });
+  if (res.ok) loadNotificationCampaigns();
 }
 
 // ── Secret setup ─────────────────────────────────────────────────

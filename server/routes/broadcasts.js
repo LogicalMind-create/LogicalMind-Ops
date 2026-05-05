@@ -1,22 +1,8 @@
 'use strict';
 const express = require('express');
 const router = express.Router();
-const fs = require('fs').promises;
-const path = require('path');
-const crypto = require('crypto');
 const { createClient } = require('@supabase/supabase-js');
 const supabase = createClient(process.env.SUPABASE_URL, process.env.SUPABASE_SERVICE_KEY);
-
-const UPLOAD_DIR = path.join(__dirname, '../public/uploads');
-const PUBLIC_UPLOAD_PATH = '/uploads';
-
-async function ensureUploadDirectory() {
-  try {
-    await fs.mkdir(UPLOAD_DIR, { recursive: true });
-  } catch (err) {
-    console.error('[broadcasts] Could not ensure upload directory:', err.message);
-  }
-}
 
 // GET /api/broadcasts
 router.get('/', async (req, res) => {
@@ -35,9 +21,7 @@ router.get('/', async (req, res) => {
 // POST /api/broadcasts — create draft (text-only or with media)
 router.post('/', async (req, res) => {
   const { message, group_filter = 'all', media_url, media_type } = req.body;
-  if (!message?.trim() && !media_url) {
-    return res.status(400).json({ error: 'Message or media attachment is required' });
-  }
+  if (!message?.trim()) return res.status(400).json({ error: 'Message is required' });
 
   if (media_url && !media_type) {
     return res.status(400).json({ error: 'media_type is required when media_url is provided ("image" or "pdf")' });
@@ -46,7 +30,7 @@ router.post('/', async (req, res) => {
     return res.status(400).json({ error: 'media_type must be "image" or "pdf"' });
   }
 
-  const insertData = { message: message?.trim() || '', group_filter, status: 'draft' };
+  const insertData = { message: message.trim(), group_filter, status: 'draft' };
   if (media_url) insertData.media_url = media_url;
   if (media_type) insertData.media_type = media_type;
 
@@ -56,44 +40,6 @@ router.post('/', async (req, res) => {
     .select().single();
   if (error) return res.status(500).json({ error: error.message });
   res.status(201).json(data);
-});
-
-// POST /api/broadcasts/upload-media — upload a local image or PDF and receive a public URL
-router.post('/upload-media', async (req, res) => {
-  const { filename, content_type, data } = req.body;
-  if (!filename || !content_type || !data) {
-    return res.status(400).json({ error: 'filename, content_type, and data are required' });
-  }
-
-  const normalizedType = String(content_type).toLowerCase();
-  const extension = normalizedType === 'application/pdf'
-    ? 'pdf'
-    : normalizedType.startsWith('image/')
-      ? normalizedType.split('/')[1]
-      : null;
-
-  if (!extension || !['pdf', 'jpg', 'jpeg', 'png', 'gif', 'webp'].includes(extension)) {
-    return res.status(400).json({ error: 'Only image or PDF uploads are supported' });
-  }
-
-  const mediaType = normalizedType === 'application/pdf' ? 'pdf' : 'image';
-  const match = String(data).match(/^data:.+;base64,(.*)$/);
-  const base64Payload = match ? match[1] : data;
-
-  try {
-    await ensureUploadDirectory();
-    const safeName = `${Date.now()}-${crypto.randomUUID()}.${extension}`;
-    const filePath = path.join(UPLOAD_DIR, safeName);
-    const fileBuffer = Buffer.from(base64Payload, 'base64');
-    await fs.writeFile(filePath, fileBuffer);
-
-    const baseUrl = `${req.protocol}://${req.get('host')}`;
-    const mediaUrl = `${baseUrl}${PUBLIC_UPLOAD_PATH}/${safeName}`;
-    res.status(201).json({ media_url: mediaUrl, media_type: mediaType });
-  } catch (err) {
-    console.error('[broadcasts] upload-media error:', err.message);
-    res.status(500).json({ error: 'Failed to upload media' });
-  }
 });
 
 // POST /api/broadcasts/:id/approve

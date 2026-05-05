@@ -1,0 +1,81 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>SmartBiz Session Extractor</title>
+    <style>
+        body { font-family: Arial, sans-serif; padding: 20px; }
+        button { padding: 10px 20px; background: #007bff; color: white; border: none; cursor: pointer; }
+        button:hover { background: #0056b3; }
+        pre { background: #f8f9fa; padding: 10px; border: 1px solid #ddd; max-height: 300px; overflow: auto; }
+        .status { margin: 10px 0; padding: 10px; border-radius: 4px; }
+        .success { background: #d4edda; color: #155724; border: 1px solid #c3e6cb; }
+        .error { background: #f8d7da; color: #721c24; border: 1px solid #f5c6cb; }
+    </style>
+</head>
+<body>
+    <h1>SmartBiz Session Extractor</h1>
+    <p>This tool extracts your SmartBiz login session and saves it for automated scraping.</p>
+
+    <button onclick="extractSession()">Extract & Save Session</button>
+
+    <div id="status"></div>
+    <div id="output"></div>
+
+    <script>
+        async function extractSession() {
+            const status = document.getElementById('status');
+            const output = document.getElementById('output');
+
+            status.innerHTML = '<div class="status">Extracting session data...</div>';
+            output.innerHTML = '';
+
+            try {
+                // Get cookies
+                const cookies = document.cookie.split(';').map(c => {
+                    const [name, ...value] = c.trim().split('=');
+                    return { name, value: value.join('='), domain: window.location.hostname };
+                });
+
+                // Get localStorage
+                const localStorage = {};
+                for (let i = 0; i < window.localStorage.length; i++) {
+                    const key = window.localStorage.key(i);
+                    localStorage[key] = window.localStorage.getItem(key);
+                }
+
+                const sessionData = {
+                    cookies,
+                    localStorage,
+                    url: window.location.href,
+                    timestamp: new Date().toISOString()
+                };
+
+                status.innerHTML = '<div class="status">Sending to server...</div>';
+
+                // Send to server
+                const response = await fetch('http://localhost:3000/save-session', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify(sessionData)
+                });
+
+                if (response.ok) {
+                    const result = await response.json();
+                    status.innerHTML = '<div class="status success">✅ Session saved successfully!</div>';
+                    output.innerHTML = '<p>You can now close this page and run the scraper:</p><pre>node scripts/smartbiz-scraper.js</pre>';
+                } else {
+                    throw new Error(`Server error: ${response.status}`);
+                }
+
+            } catch (err) {
+                status.innerHTML = `<div class="status error">❌ Error: ${err.message}</div>`;
+                output.innerHTML = '<p>Try copying this data manually:</p><pre id="manualData"></pre>';
+
+                // Show the data for manual copying
+                const manualData = document.getElementById('manualData');
+                manualData.textContent = JSON.stringify(sessionData, null, 2);
+            }
+        }
+    </script>
+</body>
+</html>

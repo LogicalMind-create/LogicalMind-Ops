@@ -19,6 +19,7 @@
     "@supabase/supabase-js": "^2.105.1",
     "axios": "^1.9.0",
     "cors": "^2.8.6",
+    "cron-parser": "^4.9.0",
     "dotenv": "^17.4.2",
     "express": "^5.2.1",
     "express-rate-limit": "^8.4.1",
@@ -27,6 +28,6 @@
     "uuid": "^14.0.0"
   },
   "devDependencies": {
-    "playwright": "^1.52.0"
+    "playwright": "^1.59.1"
   }
 }

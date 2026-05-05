@@ -5,6 +5,7 @@ const supabase = require('../lib/supabase');
 
 // Only forward messages from this chat (your Telegram group)
 const ALLOWED_CHAT_ID = process.env.TELEGRAM_CHAT_ID ? Number(process.env.TELEGRAM_CHAT_ID) : null;
+const TELEGRAM_WHATSAPP_GROUP_FILTER = process.env.TELEGRAM_WHATSAPP_GROUP_FILTER?.trim() || 'channel_rings';
 
 function telegramWebhookAuth(req, res, next) {
   const headerSecret = req.headers['x-telegram-bot-api-secret-token'];
@@ -25,12 +26,20 @@ function telegramWebhookAuth(req, res, next) {
   return res.status(401).send('Unauthorized');
 }
 
+function getTelegramMessage(update) {
+  return update.message || update.edited_message || update.channel_post || update.edited_channel_post || null;
+}
+
+function getTelegramText(message) {
+  return (message.text || message.caption || '').trim();
+}
+
 router.post('/', telegramWebhookAuth, async (req, res) => {
   // Always respond 200 immediately so Telegram doesn't retry
   res.status(200).json({ ok: true });
 
   try {
-    const message = req.body.message;
+    const message = getTelegramMessage(req.body);
     if (!message) return;
 
     // Only process messages from your configured Telegram group
@@ -40,7 +49,7 @@ router.post('/', telegramWebhookAuth, async (req, res) => {
     }
 
     // Forward text, and also captions from media posts.
-    const rawText = (message.text || message.caption || '').trim();
+    const rawText = getTelegramText(message);
     if (!rawText) return;
     const text = rawText.slice(0, 3500);
     if (text.startsWith('/')) return; // Ignore bot commands
@@ -52,7 +61,7 @@ router.post('/', telegramWebhookAuth, async (req, res) => {
       .from('broadcasts')
       .insert([{
         message: alertMessage,
-        group_filter: 'channel_rings',
+        group_filter: TELEGRAM_WHATSAPP_GROUP_FILTER,
         status: 'approved',
         created_at: new Date().toISOString(),
       }])

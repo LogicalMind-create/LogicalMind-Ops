@@ -157,3 +157,60 @@ create table if not exists scraper_sessions (
 --   month      text,
 --   created_at timestamptz default now()
 -- );
+
+-- ─────────────────────────────────────────────────────────────────
+-- Phase 4: TeachX Notifications
+-- ─────────────────────────────────────────────────────────────────
+
+create table if not exists app_notifications (
+  id              uuid primary key default gen_random_uuid(),
+  title           text not null,
+  body            text not null,
+  target_type     text default 'all',
+  target_filter   jsonb,
+  scheduled_for   timestamptz,
+  status          text default 'draft' check (status in ('draft','pending_approval','approved','sent','failed')),
+  category        text,
+  created_by      text default 'user',
+  appx_response   jsonb,
+  error_reason    text,
+  created_at      timestamptz default now(),
+  sent_at         timestamptz
+);
+
+create table if not exists notification_campaigns (
+  id              uuid primary key default gen_random_uuid(),
+  name            text not null,
+  category        text,
+  cron_rule       text not null,
+  template_title  text not null,
+  template_body   text not null,
+  target_type     text default 'all',
+  target_filter   jsonb,
+  is_active       boolean default true,
+  last_run_at     timestamptz,
+  created_at      timestamptz default now()
+);
+
+create table if not exists courses (
+  id              uuid primary key default gen_random_uuid(),
+  appx_id         text unique not null,
+  title           text,
+  price           numeric(10,2),
+  category        text,
+  is_active       boolean default true,
+  synced_at       timestamptz default now(),
+  created_at      timestamptz default now()
+);
+
+create table if not exists app_users (
+  id                  uuid primary key default gen_random_uuid(),
+  appx_id             text unique not null,
+  name                text,
+  phone               text,
+  email               text,
+  enrolled_course_ids text[],
+  last_active_at      timestamptz,
+  created_at_appx     timestamptz,
+  synced_at           timestamptz default now()
+);

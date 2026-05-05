@@ -14,6 +14,8 @@ const toolModules = {
   track_shipment:         require('../tools/track_shipment'),
   broadcast_whatsapp:     require('../tools/broadcast_whatsapp'),
   broadcast_channel_rings: require('../tools/broadcast_channel_rings'),
+  draft_notification:     require('../tools/draft_notification'),
+  schedule_campaign:      require('../tools/schedule_campaign'),
 };
 
 // ─── Convert Gemini-style declarations → OpenAI/Groq format ─────────────────
@@ -67,7 +69,9 @@ Current capabilities:
 - broadcast_channel_rings — send an urgent message immediately to the Channel Rings WhatsApp group without approval
 - list_orders — list SmartBiz/Shiprocket orders; flag delayed ones
 - create_shipment, track_shipment — create and track Shiprocket shipments
-- broadcast_whatsapp — queue a message (with optional image or PDF) to broadcast to 64 WhatsApp groups (requires dashboard approval before sending). You can attach media_url and media_type ('image' or 'pdf') for rich broadcasts.`;
+- broadcast_whatsapp — queue a message (with optional image or PDF) to broadcast to 43 WhatsApp groups (requires dashboard approval before sending). You can attach media_url and media_type ('image' or 'pdf') for rich broadcasts.
+- draft_notification — draft a push notification to TeachX app students (requires approval).
+- schedule_campaign — schedule a recurring notification campaign for TeachX students.`;
 
 // ─── Groq client ─────────────────────────────────────────────────────────────
 let _client = null;
