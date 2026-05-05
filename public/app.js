@@ -696,7 +696,9 @@ async function createBroadcast() {
   const mediaUrl  = document.getElementById('broadcast-media-url')?.value?.trim() || null;
   const mediaType = document.getElementById('broadcast-media-type')?.value || null;
 
-  if (!msg) { toast('Please type a message first', 'error'); return; }
+  if (!msg && !mediaUrl) {
+    toast('Please type a message or attach an image/PDF', 'error'); return;
+  }
 
   // Validate media
   if (mediaUrl && !mediaType) {

@@ -35,7 +35,9 @@ router.get('/', async (req, res) => {
 // POST /api/broadcasts — create draft (text-only or with media)
 router.post('/', async (req, res) => {
   const { message, group_filter = 'all', media_url, media_type } = req.body;
-  if (!message?.trim()) return res.status(400).json({ error: 'Message is required' });
+  if (!message?.trim() && !media_url) {
+    return res.status(400).json({ error: 'Message or media attachment is required' });
+  }
 
   if (media_url && !media_type) {
     return res.status(400).json({ error: 'media_type is required when media_url is provided ("image" or "pdf")' });
@@ -44,7 +46,7 @@ router.post('/', async (req, res) => {
     return res.status(400).json({ error: 'media_type must be "image" or "pdf"' });
   }
 
-  const insertData = { message: message.trim(), group_filter, status: 'draft' };
+  const insertData = { message: message?.trim() || '', group_filter, status: 'draft' };
   if (media_url) insertData.media_url = media_url;
   if (media_type) insertData.media_type = media_type;
 

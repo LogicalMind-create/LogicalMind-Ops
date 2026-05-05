@@ -20,7 +20,7 @@ module.exports = {
       properties: {
         message: {
           type: 'STRING',
-          description: 'The message text to send to the WhatsApp groups (plain text, emojis allowed). Required even when sending media.',
+          description: 'The message text to send to the WhatsApp groups (plain text, emojis allowed). Optional when sending media; required if no media is attached.',
         },
         group_filter: {
           type: 'STRING',
@@ -35,12 +35,15 @@ module.exports = {
           description: 'Optional: Type of media — "image" or "pdf". Required if media_url is provided.',
         },
       },
-      required: ['message'],
+      required: [],
     },
   },
 
   async execute({ message, group_filter = 'all', media_url, media_type }) {
-    if (!message || message.trim().length < 3) {
+    if ((!message || !message.trim()) && !media_url) {
+      return { success: false, error: 'Message or media attachment is required.' };
+    }
+    if (message && message.trim().length > 0 && message.trim().length < 3) {
       return { success: false, error: 'Message is too short.' };
     }
 
