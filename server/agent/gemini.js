@@ -5,14 +5,15 @@ const supabase = require('../lib/supabase');
 
 // ─── Tool registry ───────────────────────────────────────────────────────────
 const toolModules = {
-  assign_task:        require('../tools/assign_task'),
-  list_tasks:         require('../tools/list_tasks'),
-  complete_task:      require('../tools/complete_task'),
-  notify_team:        require('../tools/notify_team'),
-  list_orders:        require('../tools/list_orders'),
-  create_shipment:    require('../tools/create_shipment'),
-  track_shipment:     require('../tools/track_shipment'),
-  broadcast_whatsapp: require('../tools/broadcast_whatsapp'),
+  assign_task:            require('../tools/assign_task'),
+  list_tasks:             require('../tools/list_tasks'),
+  complete_task:          require('../tools/complete_task'),
+  notify_team:            require('../tools/notify_team'),
+  list_orders:            require('../tools/list_orders'),
+  create_shipment:        require('../tools/create_shipment'),
+  track_shipment:         require('../tools/track_shipment'),
+  broadcast_whatsapp:     require('../tools/broadcast_whatsapp'),
+  broadcast_channel_rings: require('../tools/broadcast_channel_rings'),
 };
 
 // ─── Convert Gemini-style declarations → OpenAI/Groq format ─────────────────
@@ -63,9 +64,10 @@ RULES:
 Current capabilities:
 - assign_task, list_tasks, complete_task — manage your team's task board
 - notify_team — send a message to the Telegram group
+- broadcast_channel_rings — send an urgent message immediately to the Channel Rings WhatsApp group without approval
 - list_orders — list SmartBiz/Shiprocket orders; flag delayed ones
 - create_shipment, track_shipment — create and track Shiprocket shipments
-- broadcast_whatsapp — queue a message (with optional image or PDF) to broadcast to 43 WhatsApp groups (requires dashboard approval before sending). You can attach media_url and media_type ('image' or 'pdf') for rich broadcasts.`;
+- broadcast_whatsapp — queue a message (with optional image or PDF) to broadcast to 64 WhatsApp groups (requires dashboard approval before sending). You can attach media_url and media_type ('image' or 'pdf') for rich broadcasts.`;
 
 // ─── Groq client ─────────────────────────────────────────────────────────────
 let _client = null;

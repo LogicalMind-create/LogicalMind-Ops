@@ -11,10 +11,10 @@ module.exports = {
   declaration: {
     name: 'broadcast_whatsapp',
     description:
-      'Queue a message to be broadcast to all 43 WhatsApp student groups. ' +
+      'Queue a message to be broadcast to all 64 WhatsApp groups. ' +
       'The message goes into an approval queue — you must approve it in the dashboard before it sends. ' +
       'Optionally attach an image or PDF by providing a public media_url and media_type. ' +
-      'Use this for TET updates, mock test announcements, holiday notices, study material PDFs, etc.',
+      'Use this for announcements, updates, documents, and notifications.'
     parameters: {
       type: 'OBJECT',
       properties: {
