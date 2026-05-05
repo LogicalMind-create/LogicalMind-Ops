@@ -45,6 +45,64 @@ function toast(msg, type = 'info') {
     el.style.transition = 'all .3s'; setTimeout(() => el.remove(), 300); }, 3500);
 }
 
+async function uploadBroadcastMediaFile(file) {
+  if (!file) throw new Error('No file selected');
+  const allowedTypes = ['application/pdf', 'image/jpeg', 'image/jpg', 'image/png', 'image/gif', 'image/webp'];
+  if (!allowedTypes.includes(file.type)) {
+    throw new Error('Only image and PDF uploads are supported');
+  }
+
+  const dataUrl = await new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => resolve(reader.result);
+    reader.onerror = () => reject(new Error('Failed to read file'));
+    reader.readAsDataURL(file);
+  });
+
+  const res = await apiFetch('/api/broadcasts/upload-media', {
+    method: 'POST',
+    body: JSON.stringify({ filename: file.name, content_type: file.type, data: dataUrl }),
+  });
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    throw new Error(err.error || 'Media upload failed');
+  }
+  return res.json();
+}
+
+function setBroadcastMediaState(mediaUrl, mediaType, fileName) {
+  const urlInput = document.getElementById('broadcast-media-url');
+  const typeSelect = document.getElementById('broadcast-media-type');
+  const fileNameLabel = document.getElementById('broadcast-media-file-name');
+  if (urlInput) urlInput.value = mediaUrl || '';
+  if (typeSelect) typeSelect.value = mediaType || '';
+  if (fileNameLabel) fileNameLabel.textContent = fileName || 'Select image or PDF from device gallery';
+}
+
+function setupBroadcastMediaUploader() {
+  const fileInput = document.getElementById('broadcast-media-file');
+  if (!fileInput) return;
+
+  fileInput.addEventListener('change', async () => {
+    const file = fileInput.files?.[0];
+    if (!file) {
+      setBroadcastMediaState('', '', 'Select image or PDF from device gallery');
+      return;
+    }
+
+    setBroadcastMediaState('', '', `Uploading ${file.name}...`);
+    try {
+      const { media_url, media_type } = await uploadBroadcastMediaFile(file);
+      setBroadcastMediaState(media_url, media_type, file.name);
+      toast('File uploaded successfully. Ready to queue broadcast.', 'success');
+    } catch (err) {
+      setBroadcastMediaState('', '', 'Select image or PDF from device gallery');
+      fileInput.value = '';
+      toast(err.message || 'Upload failed', 'error');
+    }
+  });
+}
+
 // ── Clock ────────────────────────────────────────────────────────
 function updateClock() {
   const el = document.getElementById('topbar-time');
@@ -54,6 +112,7 @@ function updateClock() {
 }
 setInterval(updateClock, 30000);
 updateClock();
+setupBroadcastMediaUploader();
 
 // ── Stats (home page) ────────────────────────────────────────────
 async function loadStats() {
@@ -661,6 +720,9 @@ async function createBroadcast() {
     document.getElementById('broadcast-compose').value = '';
     if (document.getElementById('broadcast-media-url')) document.getElementById('broadcast-media-url').value = '';
     if (document.getElementById('broadcast-media-type')) document.getElementById('broadcast-media-type').value = '';
+    const fileInput = document.getElementById('broadcast-media-file');
+    if (fileInput) fileInput.value = '';
+    setBroadcastMediaState('', '', 'Select image or PDF from device gallery');
     const mediaNote = mediaUrl ? ` with ${mediaType} attachment` : '';
     toast(`✅ Added to queue${mediaNote} — review and approve below`, 'success');
     loadBroadcasts();

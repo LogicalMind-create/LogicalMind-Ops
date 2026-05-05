@@ -11,7 +11,7 @@ const PORT = process.env.PORT || 3000;
 
 // ─── Middleware ──────────────────────────────────────────────────────────────
 app.use(cors());
-app.use(express.json());
+app.use(express.json({ limit: '20mb' }));
 app.use(express.static(path.join(__dirname, '../public')));
 
 // Groq llama-3.3-70b: 30 requests/minute limit (https://console.groq.com/docs/rate-limits)
@@ -34,6 +34,34 @@ app.use('/api/broadcasts', require('./routes/broadcasts'));
 // Webhooks (no auth — external services call these)
 app.use('/webhooks/shiprocket', require('./webhooks/shiprocket'));
 app.use('/webhooks/telegram', require('./webhooks/telegram'));
+
+// Session saving endpoint for SmartBiz scraper
+app.post('/save-session', async (req, res) => {
+  try {
+    const { createClient } = require('@supabase/supabase-js');
+    const supabase = createClient(process.env.SUPABASE_URL, process.env.SUPABASE_SERVICE_KEY);
+
+    const sessionData = req.body;
+    console.log('[Session Save] Received session data from browser');
+
+    // Save to Supabase
+    const { error } = await supabase
+      .from('scraper_sessions')
+      .upsert({
+        key: 'smartbiz',
+        cookies: JSON.stringify(sessionData),
+        saved_at: new Date().toISOString()
+      }, { onConflict: 'key' });
+
+    if (error) throw error;
+
+    console.log('[Session Save] ✓ Session saved to Supabase successfully');
+    res.json({ success: true, message: 'Session saved successfully' });
+  } catch (err) {
+    console.error('[Session Save] ❌ Error saving session:', err.message);
+    res.status(500).json({ error: 'Failed to save session', detail: err.message });
+  }
+});
 
 // Catch-all: serve dashboard SPA
 app.use((req, res) => {

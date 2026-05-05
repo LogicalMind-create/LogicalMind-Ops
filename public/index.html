@@ -346,6 +346,15 @@
           </div>
 
           <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">
+            <input id="broadcast-media-file" class="form-input" type="file"
+              accept="image/*,application/pdf"
+              style="flex:1;min-width:200px"
+            />
+            <span id="broadcast-media-file-name" style="font-size:12px;color:var(--muted);min-width:160px">
+              Select image or PDF from device gallery</span>
+          </div>
+
+          <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">
             <select id="broadcast-filter" class="form-input" style="width:160px">
               <option value="all">All 42 groups</option>
               <option value="dsc">DSC groups only</option>
