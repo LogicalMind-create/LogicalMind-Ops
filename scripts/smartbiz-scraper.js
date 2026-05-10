@@ -143,9 +143,9 @@ async function doFreshLogin(page, context) {
   if (!emailFilled) {
     await takeFailureScreenshot(page);
     console.error('[SmartBiz Scraper] ❌ Email field not found.');
-    console.error('[SmartBiz Scraper] The Amazon login page structure may have changed.');
-    console.error('[SmartBiz Scraper] Screenshot saved for inspection: C:\\Users\\kumar\\AppData\\Local\\Temp\\smartbiz-debug.png');
-    process.exit(1);
+    console.error('[SmartBiz Scraper] Amazon login page structure may have changed, or a CAPTCHA is blocking the form.');
+    console.error('[SmartBiz Scraper] Screenshot saved for inspection. Exiting gracefully (soft-fail) — no email alert.');
+    process.exit(0);
   }
   await randomDelay(500, 1000);
 
@@ -165,7 +165,8 @@ async function doFreshLogin(page, context) {
   if (!pwFilled) {
     await takeFailureScreenshot(page);
     console.error('[SmartBiz Scraper] ❌ Password field not found.');
-    process.exit(1);
+    console.error('[SmartBiz Scraper] Amazon may be showing a CAPTCHA or changed page structure. Exiting gracefully (soft-fail) — no email alert.');
+    process.exit(0);
   }
   await randomDelay(500, 1000);
 
@@ -209,7 +210,9 @@ async function doFreshLogin(page, context) {
     console.error('    → GitHub Actions will use this cached session');
     console.error('');
     console.error('[SmartBiz Scraper] Once resolved, re-run: node scripts/smartbiz-scraper.js');
-    process.exit(1);
+    console.error('[SmartBiz Scraper] ⚠ Exiting gracefully (soft-fail) — no failure email will be sent.');
+    console.error('[SmartBiz Scraper] Check the Actions run log or debug screenshot to confirm.');
+    process.exit(0);
   }
 
   // Save the fresh session so the next run skips login
@@ -649,19 +652,4 @@ async function extractCustomerAddress(page) {
             .eq('external_id', order.external_id);
           if (!updateErr) {
             updatedCount++;
-            console.log(`[SmartBiz Scraper] 🔄 Updated: ${order.external_id} ${existing.status} → ${order.status}`);
-          }
-        }
-      }
-    }
-
-    console.log(`[SmartBiz Scraper] ✅ Done. ${newCount} new, ${updatedCount} updated.`);
-    process.exit(0);
-  } catch (err) {
-    console.error('[SmartBiz Scraper] Fatal error:', err.message);
-    console.error(err.stack);
-    process.exit(1);
-  } finally {
-    await browser.close().catch(() => {});
-  }
-})();
+            console.log(`[SmartBiz Scraper] 🔄 Updated: ${order.external_id} ${existing

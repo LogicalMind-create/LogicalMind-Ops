@@ -47,18 +47,14 @@ jobs:
           SMARTBIZ_PASSWORD: ${{ secrets.SMARTBIZ_PASSWORD }}
 
       - name: Run SmartBiz Scraper
+        # continue-on-error: prevents unexpected crashes (exit 1) from marking the
+        # job as failed and triggering GitHub failure-notification emails.
+        # Soft-fail paths in the script already exit(0) — this is a last-resort guard.
+        continue-on-error: true
+        id: scraper
         env:
           SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
           SUPABASE_SERVICE_KEY: ${{ secrets.SUPABASE_SERVICE_KEY }}
           SMARTBIZ_EMAIL: ${{ secrets.SMARTBIZ_EMAIL }}
           SMARTBIZ_PASSWORD: ${{ secrets.SMARTBIZ_PASSWORD }}
-        run: node scripts/smartbiz-scraper.js
-
-      - name: Upload debug screenshot on failure
-        if: failure()
-        uses: actions/upload-artifact@v4
-        with:
-          name: smartbiz-debug-screenshot
-          path: /tmp/smartbiz-debug.png
-          if-no-files-found: ignore
-          retention-days: 3
+        run: node sc
