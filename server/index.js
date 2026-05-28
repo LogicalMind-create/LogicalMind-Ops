@@ -26,12 +26,25 @@ const chatLimiter = rateLimit({
 
 // ─── Routes ─────────────────────────────────────────────────────────────────
 app.use('/health',         require('./routes/health'));
-app.use('/api/chat',       chatLimiter, require('./routes/chat'));
-app.use('/api/tasks',      require('./routes/tasks'));
-app.use('/api/orders',     require('./routes/orders'));
-app.use('/api/broadcasts', require('./routes/broadcasts'));
-app.use('/api/notifications', require('./routes/notifications'));
-app.use('/api/notification-campaigns', require('./routes/notification-campaigns'));
+
+// ─── Auth Middleware for API routes ──────────────────────────────────────────
+function authMiddleware(req, res, next) {
+  const secret = process.env.DASHBOARD_SECRET;
+  if (!secret) {
+    console.warn('[⚠️  Auth] DASHBOARD_SECRET not set. Dashboard API is unprotected.');
+    return next();
+  }
+  const provided = req.headers['x-dashboard-secret'];
+  if (provided === secret) return next();
+  return res.status(401).json({ error: 'Unauthorized' });
+}
+
+app.use('/api/chat',       authMiddleware, chatLimiter, require('./routes/chat'));
+app.use('/api/tasks',      authMiddleware, require('./routes/tasks'));
+app.use('/api/orders',     authMiddleware, require('./routes/orders'));
+app.use('/api/broadcasts', authMiddleware, require('./routes/broadcasts'));
+app.use('/api/notifications', authMiddleware, require('./routes/notifications'));
+app.use('/api/notification-campaigns', authMiddleware, require('./routes/notification-campaigns'));
 
 // Webhooks (no auth — external services call these)
 app.use('/webhooks/shiprocket', require('./webhooks/shiprocket'));

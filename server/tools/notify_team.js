@@ -16,9 +16,26 @@ const declaration = {
   },
 };
 
+const { createClient } = require('@supabase/supabase-js');
+const supabase = createClient(process.env.SUPABASE_URL, process.env.SUPABASE_SERVICE_KEY);
+
 async function execute({ message }) {
+  // Send to Telegram
   await telegram.notify(`📢 <b>Agent Alert</b>\n${message}`);
-  return { success: true, message: 'Message sent to team Telegram.' };
+
+  // Send to Channel Rings via broadcast queue
+  try {
+    await supabase.from('broadcasts').insert([{
+      message: `📲 [From Agent]\n${message}`,
+      group_filter: 'channel_rings',
+      status: 'approved',
+      created_at: new Date().toISOString(),
+    }]);
+  } catch (err) {
+    console.error('[notify_team] Failed to enqueue Channel Rings broadcast:', err.message);
+  }
+
+  return { success: true, message: 'Message sent to team Telegram and Channel Rings WhatsApp group.' };
 }
 
 module.exports = { declaration, execute };
