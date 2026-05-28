@@ -8,9 +8,25 @@
 const API_BASE = '';   // same origin
 let SESSION_ID = localStorage.getItem('lm_session_id') || null;
 
+let DASHBOARD_SECRET = localStorage.getItem('lm_dashboard_secret') || '';
+
 function apiFetch(path, opts = {}) {
   const headers = { 'Content-Type': 'application/json', ...(opts.headers || {}) };
-  return fetch(API_BASE + path, { ...opts, headers });
+  if (DASHBOARD_SECRET) {
+    headers['x-dashboard-secret'] = DASHBOARD_SECRET;
+  }
+  return fetch(API_BASE + path, { ...opts, headers }).then(async (res) => {
+    if (res.status === 401) {
+      const secret = prompt('Dashboard is protected. Please enter the DASHBOARD_SECRET:');
+      if (secret !== null) {
+        localStorage.setItem('lm_dashboard_secret', secret);
+        DASHBOARD_SECRET = secret;
+        // Reload page to retry with new secret
+        window.location.reload();
+      }
+    }
+    return res;
+  });
 }
 
 // ── Navigation ───────────────────────────────────────────────────
